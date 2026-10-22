@@ -159,6 +159,7 @@ function handle(room,p,msg){
       p.hand.splice(handIndex,1);
       const piece={uid:room.nextPieceId++,animal:'krill',level:1,owner:p.id};
       room.board[msg.to].push(piece);room.pendingEffect=null;
+      room.active??={created:false,moved:true};room.active.moved=true;
       note(room,`${p.name}觸發磷蝦效果，將一枚磷蝦放到空格。`);
       resolvePendingEffects(room,p);broadcast(room);return;
     }
@@ -204,9 +205,14 @@ function handle(room,p,msg){
   }
   if(room.pendingEffect)return;
   if(!room.started || room.players[room.turn]?.id!==p.id) return;
-  if(msg.type==='create' && !room.active?.created && p.hand.includes(msg.animal) && canCreate(room,msg.animal,msg.cell)) {
-    p.hand.splice(p.hand.indexOf(msg.animal),1); const piece={uid:room.nextPieceId++,animal:msg.animal,...(msg.animal==='chameleon'?{}:{level:animals.find(a=>a.id===msg.animal).level}),owner:p.id}; room.board[msg.cell].push(piece); room.active??={created:false,moved:false};room.active.created=true;
-    room.effectQueue=[];room.effectSeen=new Set();queueReveal(room,msg.cell);note(room,`${p.name}創造了${animals.find(a=>a.id===msg.animal).name}。`);resolvePendingEffects(room,p);
+  if(msg.type==='create') {
+    if(room.active?.created){note(room,'本回合已創造動物，不能再創造。');}
+    else if(!p.hand.includes(msg.animal)){note(room,'無法創造：該棋子不在你的手牌中。');}
+    else if(!canCreate(room,msg.animal,msg.cell)){note(room,'無法創造：所選格不符合放置規則。');}
+    else {
+      p.hand.splice(p.hand.indexOf(msg.animal),1); const piece={uid:room.nextPieceId++,animal:msg.animal,...(msg.animal==='chameleon'?{}:{level:animals.find(a=>a.id===msg.animal).level}),owner:p.id}; room.board[msg.cell].push(piece); room.active??={created:false,moved:false};room.active.created=true;
+      room.effectQueue=[];room.effectSeen=new Set();queueReveal(room,msg.cell);note(room,`${p.name}創造了${animals.find(a=>a.id===msg.animal).name}。`);resolvePendingEffects(room,p);
+    }
   }
   if(msg.type==='move' && !room.active?.moved && Number.isInteger(msg.from) && Number.isInteger(msg.to) && msg.from>=0 && msg.from<9 && msg.to>=0 && msg.to<9 && Math.abs(msg.from%3-msg.to%3)+Math.abs(Math.floor(msg.from/3)-Math.floor(msg.to/3))===1 && room.board[msg.from].length){
     const piece=room.board[msg.from].pop(); const species=animals.find(a=>a.id===piece.animal);
