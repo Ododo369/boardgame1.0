@@ -94,7 +94,7 @@ function resolvePendingEffects(room, actor) {
       if(exposed.animal==='seal'){
         const drawn=[];
         for(let i=0;i<2&&room.bag.length;i++)drawn.push(room.bag.pop());
-        if(drawn.length){room.pendingEffect={type:'seal-select',playerId:actor.id,pieceId:exposed.uid,drawn};note(room,'海豹觸發揭露效果，抽取棋子並選擇一枚放到海豹下方。');return;}
+        if(drawn.length){room.pendingEffect={type:'seal-select',playerId:actor.id,pieceId:exposed.uid,drawn};note(room,`${actor.name}觸發海豹揭露效果，正在選擇要私藏的動物。`);return;}
       }
       if(exposed.animal==='orca'){
         const targets=room.board.map((stack,i)=>stack.length&&stack.at(-1).uid!==exposed.uid?i:-1).filter(i=>i>=0);
