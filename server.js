@@ -63,7 +63,10 @@ function resolveLines(room, actor) {
   for(const ch of done){const returned=[];for(let i=0;i<9;i++){const keep=[];for(const t of room.board[i]){if(animals.find(a=>a.id===t.animal).chain===ch)returned.push(t.animal);else keep.push(t);}room.board[i]=keep;}room.bag.push(...returned);room.players.forEach(q=>{if(q!==actor)draw(room,q,1);});note(room,`食物鏈${ch+1}連成一線或堆疊，棋子回到抽袋。`);}
 }
 function handle(room,p,msg){
-  if(msg.type==='start' && p.id===room.hostId && room.players.length>=2 && !room.started) start(room);
+  if(msg.type==='start'){
+    if(p.id===room.hostId && room.players.length>=2 && !room.started){start(room);broadcast(room);}
+    return;
+  }
   if(!room.started || room.players[room.turn]?.id!==p.id) return;
   if(msg.type==='create' && !room.active?.created && p.hand.includes(msg.animal) && canCreate(room,msg.animal,msg.cell)) {
     p.hand.splice(p.hand.indexOf(msg.animal),1); room.board[msg.cell].push({animal:msg.animal,owner:p.id}); room.active??={created:false,moved:false};room.active.created=true;
