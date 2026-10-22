@@ -51,6 +51,16 @@ function canCreate(room, animalId, cell) {
   if(animalId==='chameleon') return pieceLevel(top)<3;
   return pieceLevel(top)===a.level-1;
 }
+function placeMovedPiece(room, piece, targetCell) {
+  const target=room.board[targetCell];
+  target.push(piece);
+  if(piece.animal==='mole'){
+    target.pop();
+    target.unshift(piece);
+    return true;
+  }
+  return false;
+}
 function finishAction(room, p) {
   if(room.active?.created && room.active?.moved){
     room.active=null;
@@ -94,9 +104,9 @@ function handle(room,p,msg){
   if(msg.type==='move' && !room.active?.moved && Number.isInteger(msg.from) && Number.isInteger(msg.to) && msg.from>=0 && msg.from<9 && msg.to>=0 && msg.to<9 && Math.abs(msg.from%3-msg.to%3)+Math.abs(Math.floor(msg.from/3)-Math.floor(msg.to/3))===1 && room.board[msg.from].length){
     const piece=room.board[msg.from].pop(); const species=animals.find(a=>a.id===piece.animal);
     if(species.id==='chameleon'||species.level>0){
-      room.board[msg.to].push(piece); room.active??={created:false,moved:false};room.active.moved=true;
-      if(species.id==='mole'){room.board[msg.to].pop();room.board[msg.to].unshift(piece);}
-      if(species.id==='eagle'&&room.board[msg.from].length){room.board[msg.to].push(room.board[msg.from].pop());}
+      if(placeMovedPiece(room,piece,msg.to))note(room,'地鼠移動後觸發效果，移至目標格最下方。');
+      room.active??={created:false,moved:false};room.active.moved=true;
+      if(species.id==='eagle'&&room.board[msg.from].length){const carried=room.board[msg.from].pop();if(placeMovedPiece(room,carried,msg.to))note(room,'被老鷹帶動的地鼠觸發效果，移至目標格最下方。');}
       note(room,`${p.name}移動了${species.name}。`); finishAction(room,p);
     } else room.board[msg.from].push(piece);
   }
