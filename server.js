@@ -20,12 +20,12 @@ const animals = [
 const colors = ['#eb785d', '#4c9b8a', '#6384d8', '#d69a3d'];
 const code = () => Math.random().toString(36).slice(2, 6).toUpperCase();
 const shuffle = a => { for (let i=a.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[a[i],a[j]]=[a[j],a[i]];} return a; };
-function broadcast(room) { const data = JSON.stringify({ type:'state', state: publicState(room) }); for (const p of room.players) if (p.socket?.readyState === 1) p.socket.send(data); }
-function publicState(room) {
+function broadcast(room) { for (const p of room.players) if (p.socket?.readyState === 1) p.socket.send(JSON.stringify({ type:'state', state: publicState(room,p.id) })); }
+function publicState(room, viewerId) {
   return { code:room.code, started:room.started, hostId:room.hostId, turn:room.turn, active:room.active,
-    players:room.players.map(({id,name,hand,color,connected})=>({id,name,hand,color,connected})),
+    players:room.players.map(({id,name,hand,color,connected})=>({id,name,hand:id===viewerId?hand:[],handCount:hand.length,color,connected})),
     board:room.board, bagCount:room.bag.length, log:room.log.slice(-8), winner:room.winner,
-    pendingEffect:room.pendingEffect?{type:room.pendingEffect.type,playerId:room.pendingEffect.playerId,from:room.pendingEffect.from,targets:room.pendingEffect.targets}:null };
+    pendingEffect:room.pendingEffect?{type:room.pendingEffect.type,playerId:room.pendingEffect.playerId,from:room.pendingEffect.from,targets:room.pendingEffect.targets,...(room.pendingEffect.type==='fox-return'&&room.pendingEffect.playerId===viewerId?{count:room.pendingEffect.count}:{})}:null };
 }
 function note(room, text) { room.log.push(text); }
 function draw(room, player, n=1) { for(let i=0;i<n && room.bag.length;i++) player.hand.push(room.bag.pop()); }
@@ -86,6 +86,10 @@ function resolvePendingEffects(room, actor) {
       if(exposed.animal==='rabbit'){
         room.pendingEffect={type:'rabbit-move',playerId:actor.id,pieceId:exposed.uid,from:task.cell,targets:adjacentCells(task.cell)};
         return;
+      }
+      if(exposed.animal==='fox'){
+        const count=Math.min(2,room.bag.length);
+        if(count){draw(room,actor,count);room.pendingEffect={type:'fox-return',playerId:actor.id,count};note(room,'赤狐觸發揭露效果，抽取棋子並選擇放回抽袋。');return;}
       }
       // Other reveal effects are handled by their effect-specific resolvers as they are implemented.
       continue;
@@ -181,6 +185,17 @@ function handle(room,p,msg){
     room.board[pending.from].pop();room.board[msg.to].push(piece);room.pendingEffect=null;
     note(room,`${animals.find(a=>a.id===piece.animal).name}揭露後移動到相鄰格。`);
     queueReveal(room,pending.from,true);
+    resolvePendingEffects(room,p);broadcast(room);return;
+  }
+  if(msg.type==='foxReturn'){
+    const pending=room.pendingEffect;
+    if(!pending||pending.type!=='fox-return'||pending.playerId!==p.id||!Array.isArray(msg.animals)||msg.animals.length!==pending.count)return;
+    const available=new Map();for(const animal of p.hand)available.set(animal,(available.get(animal)||0)+1);
+    for(const animal of msg.animals){const count=available.get(animal)||0;if(!count)return;available.set(animal,count-1);}
+    const returned=[];
+    for(const animal of msg.animals){const index=p.hand.indexOf(animal);returned.push(animal);p.hand.splice(index,1);}
+    room.bag.push(...returned);shuffle(room.bag);room.pendingEffect=null;
+    note(room,`${p.name}完成赤狐效果。`);
     resolvePendingEffects(room,p);broadcast(room);return;
   }
   if(msg.type==='start'){
