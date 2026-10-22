@@ -104,6 +104,12 @@ function resolvePendingEffects(room, actor) {
           room.pendingEffect={type:'krill-place',playerId:actor.id,pieceId:found.piece.uid,targets};
           return;
         }
+      } else if(found&&found.piece.animal==='weasel'&&found.cell===task.target){
+        const targets=room.board.map((stack,i)=>stack.length&&stack.at(-1).uid!==found.piece.uid&&adjacentCells(i).length?i:-1).filter(i=>i>=0);
+        if(targets.length){
+          room.pendingEffect={type:'weasel-select',playerId:actor.id,pieceId:found.piece.uid,targets};
+          return;
+        }
       }
     }
   }
@@ -150,6 +156,23 @@ function handle(room,p,msg){
       const piece={uid:room.nextPieceId++,animal:'krill',level:1,owner:p.id};
       room.board[msg.to].push(piece);room.pendingEffect=null;
       note(room,`${p.name}觸發磷蝦效果，將一枚磷蝦放到空格。`);
+      resolvePendingEffects(room,p);broadcast(room);return;
+    }
+    if(pending.type==='weasel-select'){
+      const weasel=findPiece(room,pending.pieceId),stack=room.board[msg.to];
+      if(!weasel||stack.at(-1)?.uid===weasel.piece.uid||!stack.length)return;
+      const moved=stack.at(-1);
+      room.pendingEffect={type:'weasel-target',playerId:p.id,pieceId:moved.uid,from:msg.to,targets:adjacentCells(msg.to),weaselId:pending.pieceId};
+      broadcast(room);return;
+    }
+    if(pending.type==='weasel-target'){
+      const source=room.board[pending.from],piece=source.at(-1);
+      if(!piece||piece.uid!==pending.pieceId||!pending.targets.includes(msg.to))return;
+      source.pop();room.board[msg.to].push(piece);room.pendingEffect=null;
+      note(room,`${p.name}觸發黃鼬效果，移動了一枚其他棋子。`);
+      queueReveal(room,pending.from);
+      const species=animals.find(a=>a.id===piece.animal);
+      if(species?.trigger==='移動')room.effectQueue.push({type:'after-move',pieceId:piece.uid,target:msg.to});
       resolvePendingEffects(room,p);broadcast(room);return;
     }
     if(pending.type!=='rabbit-move')return;
