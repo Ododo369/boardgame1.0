@@ -11,7 +11,7 @@ const animals = [
   { id: 'python', name: '蟒蛇', chain: 0, level: 3, trigger: '揭露', effect: '將所有相鄰格最上方棋子依玩家選擇順序收至自身下方' },
   { id: 'rabbit', name: '兔子', chain: 1, level: 1, trigger: '揭露', effect: '自身移動一次' },
   { id: 'fox', name: '赤狐', chain: 1, level: 2, trigger: '揭露', effect: '抽2枚棋子，再放回2枚' },
-  { id: 'eagle', name: '老鷹', chain: 1, level: 3, trigger: '移動', effect: '帶著下方1枚棋子移動' },
+  { id: 'eagle', name: '老鷹', chain: 1, level: 3, trigger: '移動', effect: '移動後將自身與下方棋子一起放到任意格最上方，堆疊順序不變' },
   { id: 'krill', name: '磷蝦', chain: 2, level: 1, trigger: '移動', effect: '將手中的磷蝦放到空格' },
   { id: 'seal', name: '海豹', chain: 2, level: 2, trigger: '揭露', effect: '抽2枚，選1枚放在自身下方' },
   { id: 'orca', name: '虎鯨', chain: 2, level: 3, trigger: '揭露', effect: '將場上1枚棋子拿到手中' },
@@ -135,6 +135,9 @@ function resolvePendingEffects(room, actor) {
           room.pendingEffect={type:'weasel-select',playerId:actor.id,pieceId:found.piece.uid,targets};
           return;
         }
+      } else if(found&&found.piece.animal==='eagle'&&found.cell===task.target){
+        room.pendingEffect={type:'eagle-flight',playerId:actor.id,pieceId:found.piece.uid,cargoId:task.cargoId??null,from:found.cell,targets:room.board.map((_,i)=>i)};
+        return;
       }
     }
   }
@@ -190,6 +193,22 @@ function handle(room,p,msg){
       if(!chosen||top?.uid!==chosen.pieceId)return;
       room.pendingEffect=null;room.effectQueue.unshift({type:'reveal',...chosen});
       note(room,`${p.name}選擇觸發一個揭露效果。`);
+      resolvePendingEffects(room,p);broadcast(room);return;
+    }
+    if(pending.type==='eagle-flight'){
+      const eagle=findPiece(room,pending.pieceId),source=eagle&&room.board[eagle.cell];
+      if(!eagle||eagle.piece.animal!=='eagle'||!source)return;
+      const previousTop=source.at(-1)?.uid;
+      let cargo=null;
+      if(pending.cargoId){
+        if(source[eagle.index-1]?.uid!==pending.cargoId)return;
+        [cargo]=source.splice(eagle.index-1,1);
+      }
+      const refreshed=findPiece(room,pending.pieceId),[bird]=room.board[refreshed.cell].splice(refreshed.index,1);
+      room.board[msg.to].push(...(cargo?[cargo]:[]),bird);
+      room.pendingEffect=null;
+      note(room,`${p.name}觸發老鷹效果，飛到第${msg.to+1}格。`);
+      if(room.board[refreshed.cell].at(-1)?.uid!==previousTop)queueReveal(room,refreshed.cell);
       resolvePendingEffects(room,p);broadcast(room);return;
     }
     if(pending.type==='python-collect'){
@@ -267,12 +286,13 @@ function handle(room,p,msg){
     }
   }
   if(msg.type==='move' && !room.active?.moved && Number.isInteger(msg.from) && Number.isInteger(msg.to) && msg.from>=0 && msg.from<9 && msg.to>=0 && msg.to<9 && Math.abs(msg.from%3-msg.to%3)+Math.abs(Math.floor(msg.from/3)-Math.floor(msg.to/3))===1 && room.board[msg.from].length){
-    const piece=room.board[msg.from].pop(); const species=animals.find(a=>a.id===piece.animal);
+    const piece=room.board[msg.from].pop(); const species=animals.find(a=>a.id===piece.animal);let carried=null;
     if(species.id==='chameleon'||species.level>0){
+      if(species.id==='eagle'&&room.board[msg.from].length)carried=room.board[msg.from].pop();
+      if(carried)placeMovedPiece(room,carried,msg.to);
       placeMovedPiece(room,piece,msg.to);
       room.active??={created:false,moved:false};room.active.moved=true;
-      if(species.id==='eagle'&&room.board[msg.from].length){const carried=room.board[msg.from].pop();placeMovedPiece(room,carried,msg.to);}
-      room.effectQueue=[];room.effectSeen=new Set();queueReveal(room,msg.from);if(species.trigger==='移動')room.effectQueue.push({type:'after-move',pieceId:piece.uid,target:msg.to});
+      room.effectQueue=[];room.effectSeen=new Set();queueReveal(room,msg.from);if(species.trigger==='移動')room.effectQueue.push({type:'after-move',pieceId:piece.uid,target:msg.to,...(carried?{cargoId:carried.uid}:{})});
       note(room,`${p.name}移動了${species.name}。`);resolvePendingEffects(room,p);
     } else room.board[msg.from].push(piece);
   }
