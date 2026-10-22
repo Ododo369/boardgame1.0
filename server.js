@@ -136,7 +136,7 @@ function resolvePendingEffects(room, actor) {
           return;
         }
       } else if(found&&found.piece.animal==='eagle'&&found.cell===task.target){
-        room.pendingEffect={type:'eagle-flight',playerId:actor.id,pieceId:found.piece.uid,cargoId:task.cargoId??null,from:found.cell,targets:room.board.map((_,i)=>i)};
+        room.pendingEffect={type:'eagle-flight',playerId:actor.id,pieceId:found.piece.uid,cargoId:task.cargoId??null,cargoFrom:task.origin,from:found.cell,targets:room.board.map((_,i)=>i)};
         return;
       }
     }
@@ -198,17 +198,24 @@ function handle(room,p,msg){
     if(pending.type==='eagle-flight'){
       const eagle=findPiece(room,pending.pieceId),source=eagle&&room.board[eagle.cell];
       if(!eagle||eagle.piece.animal!=='eagle'||!source)return;
-      const previousTop=source.at(-1)?.uid;
+      const originTop=room.board[pending.cargoFrom]?.at(-1)?.uid;
+      const flightTop=source.at(-1)?.uid;
       let cargo=null;
       if(pending.cargoId){
-        if(source[eagle.index-1]?.uid!==pending.cargoId)return;
-        [cargo]=source.splice(eagle.index-1,1);
+        const cargoStack=room.board[pending.cargoFrom];
+        if(cargoStack?.at(-1)?.uid!==pending.cargoId)return;
+        cargo=cargoStack.pop();
       }
       const refreshed=findPiece(room,pending.pieceId),[bird]=room.board[refreshed.cell].splice(refreshed.index,1);
       room.board[msg.to].push(...(cargo?[cargo]:[]),bird);
       room.pendingEffect=null;
       note(room,`${p.name}觸發老鷹效果，飛到第${msg.to+1}格。`);
-      if(room.board[refreshed.cell].at(-1)?.uid!==previousTop)queueReveal(room,refreshed.cell);
+      const candidates=[];
+      for(const cell of new Set([pending.cargoFrom,refreshed.cell])){
+        const before=cell===pending.cargoFrom?originTop:flightTop,top=room.board[cell].at(-1);
+        if(top&&top.uid!==before)candidates.push({cell,pieceId:top.uid});
+      }
+      if(candidates.length)room.effectQueue.unshift({type:'reveal-group',candidates});
       resolvePendingEffects(room,p);broadcast(room);return;
     }
     if(pending.type==='python-collect'){
@@ -286,13 +293,14 @@ function handle(room,p,msg){
     }
   }
   if(msg.type==='move' && !room.active?.moved && Number.isInteger(msg.from) && Number.isInteger(msg.to) && msg.from>=0 && msg.from<9 && msg.to>=0 && msg.to<9 && Math.abs(msg.from%3-msg.to%3)+Math.abs(Math.floor(msg.from/3)-Math.floor(msg.to/3))===1 && room.board[msg.from].length){
-    const piece=room.board[msg.from].pop(); const species=animals.find(a=>a.id===piece.animal);let carried=null;
+    const piece=room.board[msg.from].pop(); const species=animals.find(a=>a.id===piece.animal);
     if(species.id==='chameleon'||species.level>0){
-      if(species.id==='eagle'&&room.board[msg.from].length)carried=room.board[msg.from].pop();
-      if(carried)placeMovedPiece(room,carried,msg.to);
+      const cargo=species.id==='eagle'?room.board[msg.from].at(-1):null;
       placeMovedPiece(room,piece,msg.to);
       room.active??={created:false,moved:false};room.active.moved=true;
-      room.effectQueue=[];room.effectSeen=new Set();queueReveal(room,msg.from);if(species.trigger==='移動')room.effectQueue.push({type:'after-move',pieceId:piece.uid,target:msg.to,...(carried?{cargoId:carried.uid}:{})});
+      room.effectQueue=[];room.effectSeen=new Set();
+      if(species.id==='eagle')room.effectQueue.push({type:'after-move',pieceId:piece.uid,target:msg.to,origin:msg.from,...(cargo?{cargoId:cargo.uid}:{})});
+      else {queueReveal(room,msg.from);if(species.trigger==='移動')room.effectQueue.push({type:'after-move',pieceId:piece.uid,target:msg.to});}
       note(room,`${p.name}移動了${species.name}。`);resolvePendingEffects(room,p);
     } else room.board[msg.from].push(piece);
   }
