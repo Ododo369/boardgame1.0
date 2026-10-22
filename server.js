@@ -34,7 +34,9 @@ function drawOpeningHand(room, player) {
   player.hand.push(room.bag.splice(levelOne[Math.floor(Math.random()*levelOne.length)],1)[0]); draw(room,player,2);
 }
 function start(room) {
-  room.started=true; room.bag=shuffle([...Array(3).fill('mole'),...Array(3).fill('weasel'),...Array(3).fill('python'),...Array(3).fill('rabbit'),...Array(3).fill('fox'),...Array(3).fill('eagle'),...Array(3).fill('krill'),...Array(3).fill('seal'),...Array(3).fill('orca'), 'chameleon','chameleon']);
+  const countsByLevel={1:7,2:4,3:2};
+  const animalTiles=animals.filter(a=>a.chain<3).flatMap(a=>Array(countsByLevel[a.level]).fill(a.id));
+  room.started=true; room.bag=shuffle([...animalTiles,'chameleon','chameleon']);
   room.players.forEach(p=>drawOpeningHand(room,p)); room.turn=Math.floor(Math.random()*room.players.length); room.active=null; draw(room,room.players[room.turn]); note(room,`遊戲開始！每位玩家的起手牌至少有一枚等級一棋子。${room.players[room.turn].name}的回合開始。`);
 }
 function canCreate(room, animalId, cell) {
