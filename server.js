@@ -97,6 +97,13 @@ function resolvePendingEffects(room, actor) {
         room.board[found.cell].unshift(mole);
         note(room,'地鼠移動後觸發效果，移至目標格最下方。');
         queueReveal(room,task.target,true);
+      } else if(found&&found.piece.animal==='krill'&&found.cell===task.target){
+        const player=room.players.find(q=>q.id===actor.id);
+        const targets=room.board.map((stack,i)=>stack.length===0?i:-1).filter(i=>i>=0);
+        if(player?.hand.includes('krill')&&targets.length){
+          room.pendingEffect={type:'krill-place',playerId:actor.id,pieceId:found.piece.uid,targets};
+          return;
+        }
       }
     }
   }
@@ -135,7 +142,17 @@ function resolveLines(room, actor) {
 function handle(room,p,msg){
   if(msg.type==='effectMove'){
     const pending=room.pendingEffect;
-    if(!pending||pending.type!=='rabbit-move'||pending.playerId!==p.id||!pending.targets.includes(msg.to))return;
+    if(!pending||pending.playerId!==p.id||!pending.targets.includes(msg.to))return;
+    if(pending.type==='krill-place'){
+      const handIndex=p.hand.indexOf('krill');
+      if(handIndex<0||room.board[msg.to].length){room.pendingEffect=null;resolvePendingEffects(room,p);broadcast(room);return;}
+      p.hand.splice(handIndex,1);
+      const piece={uid:room.nextPieceId++,animal:'krill',level:1,owner:p.id};
+      room.board[msg.to].push(piece);room.pendingEffect=null;
+      note(room,`${p.name}觸發磷蝦效果，將一枚磷蝦放到空格。`);
+      resolvePendingEffects(room,p);broadcast(room);return;
+    }
+    if(pending.type!=='rabbit-move')return;
     const piece=room.board[pending.from].at(-1);
     if(!piece||piece.uid!==pending.pieceId){room.pendingEffect=null;resolvePendingEffects(room,p);broadcast(room);return;}
     room.board[pending.from].pop();room.board[msg.to].push(piece);room.pendingEffect=null;
