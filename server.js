@@ -11,7 +11,7 @@ const animals = [
   { id: 'python', name: '蟒蛇', chain: 0, level: 3, trigger: '揭露', effect: '將所有相鄰格最上方棋子依玩家選擇順序收至自身下方' },
   { id: 'rabbit', name: '兔子', chain: 1, level: 1, trigger: '揭露', effect: '自身移動一次' },
   { id: 'fox', name: '赤狐', chain: 1, level: 2, trigger: '揭露', effect: '抽2枚棋子，再放回2枚' },
-  { id: 'eagle', name: '老鷹', chain: 1, level: 3, trigger: '移動', effect: '移動後將自身與下方棋子作為一組放到任意格最上方，順序不變；被帶棋子不觸發移動或揭露效果' },
+  { id: 'eagle', name: '老鷹', chain: 1, level: 3, trigger: '移動', effect: '先移動到相鄰格；移動後將自身與落腳格中位於自身下方的一枚棋子作為一組放到任意格最上方，順序不變；被帶棋子不觸發移動或揭露效果' },
   { id: 'krill', name: '磷蝦', chain: 2, level: 1, trigger: '移動', effect: '將手中的磷蝦放到空格' },
   { id: 'seal', name: '海豹', chain: 2, level: 2, trigger: '揭露', effect: '抽2枚，選1枚放在自身下方' },
   { id: 'orca', name: '虎鯨', chain: 2, level: 3, trigger: '揭露', effect: '將場上1枚棋子拿到手中' },
@@ -136,7 +136,8 @@ function resolvePendingEffects(room, actor) {
           return;
         }
       } else if(found&&found.piece.animal==='eagle'&&found.cell===task.target){
-        room.pendingEffect={type:'eagle-flight',playerId:actor.id,pieceId:found.piece.uid,cargoId:task.cargoId??null,cargoFrom:task.origin,from:found.cell,targets:room.board.map((_,i)=>i)};
+        const stack=room.board[found.cell],cargo=stack[found.index-1];
+        room.pendingEffect={type:'eagle-flight',playerId:actor.id,pieceId:found.piece.uid,cargoId:cargo?.uid??null,from:found.cell,targets:room.board.map((_,i)=>i)};
         return;
       }
     }
@@ -198,24 +199,18 @@ function handle(room,p,msg){
     if(pending.type==='eagle-flight'){
       const eagle=findPiece(room,pending.pieceId),source=eagle&&room.board[eagle.cell];
       if(!eagle||eagle.piece.animal!=='eagle'||!source)return;
-      const originTop=room.board[pending.cargoFrom]?.at(-1)?.uid;
-      const flightTop=source.at(-1)?.uid;
+      const previousTop=source.at(-1)?.uid;
       let cargo=null;
       if(pending.cargoId){
-        const cargoStack=room.board[pending.cargoFrom];
-        if(cargoStack?.at(-1)?.uid!==pending.cargoId)return;
-        cargo=cargoStack.pop();
+        if(source[eagle.index-1]?.uid!==pending.cargoId)return;
+        [cargo]=source.splice(eagle.index-1,1);
       }
       const refreshed=findPiece(room,pending.pieceId),[bird]=room.board[refreshed.cell].splice(refreshed.index,1);
       room.board[msg.to].push(...(cargo?[cargo]:[]),bird);
       room.pendingEffect=null;
       note(room,`${p.name}觸發老鷹效果，飛到第${msg.to+1}格。`);
-      const candidates=[];
-      for(const cell of new Set([pending.cargoFrom,refreshed.cell])){
-        const before=cell===pending.cargoFrom?originTop:flightTop,top=room.board[cell].at(-1);
-        if(top&&top.uid!==before)candidates.push({cell,pieceId:top.uid});
-      }
-      if(candidates.length)room.effectQueue.unshift({type:'reveal-group',candidates});
+      const top=room.board[refreshed.cell].at(-1);
+      if(top&&top.uid!==previousTop)queueReveal(room,refreshed.cell,true);
       resolvePendingEffects(room,p);broadcast(room);return;
     }
     if(pending.type==='python-collect'){
@@ -295,13 +290,12 @@ function handle(room,p,msg){
   if(msg.type==='move' && !room.active?.moved && Number.isInteger(msg.from) && Number.isInteger(msg.to) && msg.from>=0 && msg.from<9 && msg.to>=0 && msg.to<9 && Math.abs(msg.from%3-msg.to%3)+Math.abs(Math.floor(msg.from/3)-Math.floor(msg.to/3))===1 && room.board[msg.from].length){
     const piece=room.board[msg.from].pop(); const species=animals.find(a=>a.id===piece.animal);
     if(species.id==='chameleon'||species.level>0){
-      const cargo=species.id==='eagle'?room.board[msg.from].at(-1):null;
       placeMovedPiece(room,piece,msg.to);
       room.active??={created:false,moved:false};room.active.moved=true;
       room.effectQueue=[];room.effectSeen=new Set();
-      if(species.id==='eagle')room.effectQueue.push({type:'after-move',pieceId:piece.uid,target:msg.to,origin:msg.from,...(cargo?{cargoId:cargo.uid}:{})});
-      else {queueReveal(room,msg.from);if(species.trigger==='移動')room.effectQueue.push({type:'after-move',pieceId:piece.uid,target:msg.to});}
-      note(room,`${p.name}移動了${species.name}。`);resolvePendingEffects(room,p);
+      queueReveal(room,msg.from);
+      if(species.trigger==='移動')room.effectQueue.push({type:'after-move',pieceId:piece.uid,target:msg.to});
+      note(room,species.id==='eagle'?`${p.name}先將老鷹移到相鄰格；接著可帶著落腳格中位於老鷹下方的一枚棋子飛往任意格。`:`${p.name}移動了${species.name}。`);resolvePendingEffects(room,p);
     } else room.board[msg.from].push(piece);
   }
   if(msg.type==='skip' && !room.active){draw(room,p,1);room.turn=(room.turn+1)%room.players.length;note(room,`${p.name}無法完成行動，抽取1枚棋子並跳過。`);}
