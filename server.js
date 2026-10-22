@@ -15,7 +15,7 @@ const animals = [
   { id: 'krill', name: '磷蝦', chain: 2, level: 1, trigger: '移動', effect: '將手中的磷蝦放到空格' },
   { id: 'seal', name: '海豹', chain: 2, level: 2, trigger: '揭露', effect: '抽2枚，選1枚放在自身下方' },
   { id: 'orca', name: '虎鯨', chain: 2, level: 3, trigger: '揭露', effect: '將場上1枚棋子拿到手中' },
-  { id: 'chameleon', name: '變色龍', chain: 3, level: 0, trigger: '特殊', effect: '可當作任一動物（原型：不能創造）' },
+  { id: 'chameleon', name: '變色龍', chain: 3, level: 0, trigger: '無', effect: '創造時選擇等級一、二或三；沒有移動或揭露觸發效果' },
 ];
 const colors = ['#eb785d', '#4c9b8a', '#6384d8', '#d69a3d'];
 const code = () => Math.random().toString(36).slice(2, 6).toUpperCase();
@@ -36,13 +36,18 @@ function drawOpeningHand(room, player) {
 function start(room) {
   const countsByLevel={1:7,2:4,3:2};
   const animalTiles=animals.filter(a=>a.chain<3).flatMap(a=>Array(countsByLevel[a.level]).fill(a.id));
-  room.started=true; room.bag=shuffle([...animalTiles,'chameleon','chameleon']);
+  room.started=true; room.bag=shuffle([...animalTiles,'chameleon','chameleon','chameleon']);
   room.players.forEach(p=>drawOpeningHand(room,p)); room.turn=Math.floor(Math.random()*room.players.length); room.active=null; draw(room,room.players[room.turn]); note(room,`遊戲開始！每位玩家的起手牌至少有一枚等級一棋子。${room.players[room.turn].name}的回合開始。`);
 }
-function canCreate(room, animalId, cell) {
-  const a=animals.find(x=>x.id===animalId); if(!a || a.id==='chameleon') return false;
-  const stack=room.board[cell]; if(a.level===1) return stack.length===0;
-  return stack.length>0 && animals.find(x=>x.id===stack.at(-1).animal)?.level===a.level-1;
+function pieceLevel(piece) {
+  return piece.level ?? animals.find(x=>x.id===piece.animal)?.level ?? 0;
+}
+function canCreate(room, animalId, cell, chosenLevel) {
+  const a=animals.find(x=>x.id===animalId); if(!a || !Number.isInteger(cell) || cell<0 || cell>=room.board.length) return false;
+  const level=animalId==='chameleon'?chosenLevel:a.level;
+  if(![1,2,3].includes(level)) return false;
+  const stack=room.board[cell]; if(level===1) return stack.length===0;
+  return stack.length>0 && pieceLevel(stack.at(-1))===level-1;
 }
 function finishAction(room, p) {
   if(room.active?.created && room.active?.moved){
@@ -55,14 +60,23 @@ function finishAction(room, p) {
   }
 }
 function resolveLines(room, actor) {
-  // On the 3x3 board, a line or a three-piece same-chain stack completes a chain.
-  let done=new Set();
-  for(const stack of room.board) if(stack.length===3){const ch=animals.find(a=>a.id===stack[0].animal).chain;if(ch<3&&stack.every(t=>animals.find(a=>a.id===t.animal).chain===ch))done.add(ch);}
-  for(let y=0;y<3;y++) for(let x=0;x<3;x++) for(const [dx,dy] of [[1,0],[0,1],[1,1],[-1,1]]) {
-    let cells=[]; for(let k=0;k<3;k++){let xx=x+dx*k,yy=y+dy*k;if(xx<0||xx>2||yy<0||yy>2){cells=[];break;}cells.push(yy*3+xx);}
-    if(cells.length!==3)continue; const tops=cells.map(c=>room.board[c].at(-1)); if(tops.every(Boolean)){const ch=animals.find(a=>a.id===tops[0].animal).chain;if(ch<3&&tops.every(t=>animals.find(a=>a.id===t.animal).chain===ch)) done.add(ch);}
+  const lines=[[0,1,2],[3,4,5],[6,7,8],[0,3,6],[1,4,7],[2,5,8],[0,4,8],[2,4,6]];
+  for(const cells of lines){
+    const tops=cells.map(c=>room.board[c].at(-1)); if(!tops.every(Boolean)) continue;
+    const isChameleonLine=tops.every(t=>t.animal==='chameleon');
+    let chain=-1;
+    if(!isChameleonLine){
+      const species=tops.map(t=>animals.find(a=>a.id===t.animal));
+      if(species.some(a=>!a||a.chain>=3)||!species.every(a=>a.chain===species[0].chain)) continue;
+      const levels=species.map((a,i)=>pieceLevel(tops[i])).sort((a,b)=>a-b);
+      if(levels.join(',')!=='1,2,3') continue;
+      chain=species[0].chain;
+    }
+    const returned=cells.map(c=>room.board[c].pop().animal);
+    room.bag.push(...returned);
+    room.players.forEach(q=>{if(q!==actor)draw(room,q,1);});
+    note(room,isChameleonLine?'三枚變色龍連成一線，棋子回到抽袋。':`食物鏈${chain+1}以一、二、三級棋子連成一線，棋子回到抽袋。`);
   }
-  for(const ch of done){const returned=[];for(let i=0;i<9;i++){const keep=[];for(const t of room.board[i]){if(animals.find(a=>a.id===t.animal).chain===ch)returned.push(t.animal);else keep.push(t);}room.board[i]=keep;}room.bag.push(...returned);room.players.forEach(q=>{if(q!==actor)draw(room,q,1);});note(room,`食物鏈${ch+1}連成一線或堆疊，棋子回到抽袋。`);}
 }
 function handle(room,p,msg){
   if(msg.type==='start'){
@@ -70,13 +84,13 @@ function handle(room,p,msg){
     return;
   }
   if(!room.started || room.players[room.turn]?.id!==p.id) return;
-  if(msg.type==='create' && !room.active?.created && p.hand.includes(msg.animal) && canCreate(room,msg.animal,msg.cell)) {
-    p.hand.splice(p.hand.indexOf(msg.animal),1); room.board[msg.cell].push({animal:msg.animal,owner:p.id}); room.active??={created:false,moved:false};room.active.created=true;
+  if(msg.type==='create' && !room.active?.created && p.hand.includes(msg.animal) && canCreate(room,msg.animal,msg.cell,msg.level)) {
+    p.hand.splice(p.hand.indexOf(msg.animal),1); room.board[msg.cell].push({animal:msg.animal,level:msg.animal==='chameleon'?msg.level:animals.find(a=>a.id===msg.animal).level,owner:p.id}); room.active??={created:false,moved:false};room.active.created=true;
     note(room,`${p.name}創造了${animals.find(a=>a.id===msg.animal).name}。`); finishAction(room,p);
   }
   if(msg.type==='move' && !room.active?.moved && Number.isInteger(msg.from) && Number.isInteger(msg.to) && msg.from>=0 && msg.from<9 && msg.to>=0 && msg.to<9 && Math.abs(msg.from%3-msg.to%3)+Math.abs(Math.floor(msg.from/3)-Math.floor(msg.to/3))===1 && room.board[msg.from].length){
     const piece=room.board[msg.from].pop(); const species=animals.find(a=>a.id===piece.animal);
-    if(species.level>0){
+    if(species.id==='chameleon'||species.level>0){
       room.board[msg.to].push(piece); room.active??={created:false,moved:false};room.active.moved=true;
       if(species.id==='mole'){room.board[msg.to].pop();room.board[msg.to].unshift(piece);}
       if(species.id==='eagle'&&room.board[msg.from].length){room.board[msg.to].push(room.board[msg.from].pop());}
