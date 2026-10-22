@@ -14,7 +14,7 @@ const animals = [
   { id: 'eagle', name: '老鷹', chain: 1, level: 3, trigger: '移動', effect: '先移動到相鄰格；移動後將自身與落腳格中位於自身下方的一枚棋子作為一組放到任意格最上方，順序不變；被帶棋子不觸發移動或揭露效果' },
   { id: 'krill', name: '磷蝦', chain: 2, level: 1, trigger: '移動', effect: '將手中的磷蝦放到空格' },
   { id: 'seal', name: '海豹', chain: 2, level: 2, trigger: '揭露', effect: '抽2枚，選1枚放在自身下方' },
-  { id: 'orca', name: '虎鯨', chain: 2, level: 3, trigger: '揭露', effect: '將場上1枚棋子拿到手中' },
+  { id: 'orca', name: '虎鯨', chain: 2, level: 3, trigger: '揭露', effect: '被創造或揭露時，將場上1枚最上方棋子拿到手中' },
   { id: 'chameleon', name: '變色龍', chain: 3, level: 0, trigger: '無', effect: '可視為任意等級；沒有移動或揭露觸發效果' },
 ];
 const colors = ['#eb785d', '#4c9b8a', '#6384d8', '#d69a3d'];
@@ -95,6 +95,10 @@ function resolvePendingEffects(room, actor) {
         const drawn=[];
         for(let i=0;i<2&&room.bag.length;i++)drawn.push(room.bag.pop());
         if(drawn.length){room.pendingEffect={type:'seal-select',playerId:actor.id,pieceId:exposed.uid,drawn};note(room,'海豹觸發揭露效果，抽取棋子並選擇一枚放到海豹下方。');return;}
+      }
+      if(exposed.animal==='orca'){
+        const targets=room.board.map((stack,i)=>stack.length?i:-1).filter(i=>i>=0);
+        if(targets.length){room.pendingEffect={type:'orca-take',playerId:actor.id,pieceId:exposed.uid,targets};note(room,'虎鯨觸發揭露效果，選擇一格拿走最上方棋子。');return;}
       }
       if(exposed.animal==='python'){
         const targets=adjacentCells(task.cell).filter(cell=>room.board[cell].length);
@@ -211,6 +215,14 @@ function handle(room,p,msg){
       note(room,`${p.name}觸發老鷹效果，飛到第${msg.to+1}格。`);
       const top=room.board[refreshed.cell].at(-1);
       if(top&&top.uid!==previousTop)queueReveal(room,refreshed.cell,true);
+      resolvePendingEffects(room,p);broadcast(room);return;
+    }
+    if(pending.type==='orca-take'){
+      const stack=room.board[msg.to],taken=stack.at(-1);
+      if(!taken)return;
+      stack.pop();p.hand.push(taken.animal);room.pendingEffect=null;
+      note(room,`${p.name}觸發虎鯨效果，將一枚最上方棋子拿到手中。`);
+      queueReveal(room,msg.to,true);
       resolvePendingEffects(room,p);broadcast(room);return;
     }
     if(pending.type==='python-collect'){
