@@ -53,7 +53,7 @@ function finishAction(room, p) {
   }
 }
 function resolveLines(room, actor) {
-  // Prototype board uses 5x5; a line or a three-piece same-chain stack completes a chain.
+  // On the 3x3 board, a line or a three-piece same-chain stack completes a chain.
   let done=new Set();
   for(const stack of room.board) if(stack.length===3){const ch=animals.find(a=>a.id===stack[0].animal).chain;if(ch<3&&stack.every(t=>animals.find(a=>a.id===t.animal).chain===ch))done.add(ch);}
   for(let y=0;y<3;y++) for(let x=0;x<3;x++) for(const [dx,dy] of [[1,0],[0,1],[1,1],[-1,1]]) {
@@ -74,7 +74,7 @@ function handle(room,p,msg){
   }
   if(msg.type==='move' && !room.active?.moved && Number.isInteger(msg.from) && Number.isInteger(msg.to) && msg.from>=0 && msg.from<9 && msg.to>=0 && msg.to<9 && Math.abs(msg.from%3-msg.to%3)+Math.abs(Math.floor(msg.from/3)-Math.floor(msg.to/3))===1 && room.board[msg.from].length){
     const piece=room.board[msg.from].pop(); const species=animals.find(a=>a.id===piece.animal);
-    if(species.level>0 && (room.board[msg.to].length===0 || species.level===animals.find(a=>a.id===room.board[msg.to].at(-1).animal)?.level+1)){
+    if(species.level>0){
       room.board[msg.to].push(piece); room.active??={created:false,moved:false};room.active.moved=true;
       if(species.id==='mole'){room.board[msg.to].pop();room.board[msg.to].unshift(piece);}
       if(species.id==='eagle'&&room.board[msg.from].length){room.board[msg.to].push(room.board[msg.from].pop());}
