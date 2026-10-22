@@ -8,7 +8,7 @@ const rooms = new Map();
 const animals = [
   { id: 'mole', name: '地鼠', chain: 0, level: 1, trigger: '移動', effect: '移至該格堆疊最底部' },
   { id: 'weasel', name: '黃鼬', chain: 0, level: 2, trigger: '移動', effect: '移動自己以外的一枚棋子' },
-  { id: 'python', name: '蟒蛇', chain: 0, level: 3, trigger: '揭露', effect: '將相鄰格最上方棋子收至自身下方' },
+  { id: 'python', name: '蟒蛇', chain: 0, level: 3, trigger: '揭露', effect: '將所有相鄰格最上方棋子依玩家選擇順序收至自身下方' },
   { id: 'rabbit', name: '兔子', chain: 1, level: 1, trigger: '揭露', effect: '自身移動一次' },
   { id: 'fox', name: '赤狐', chain: 1, level: 2, trigger: '揭露', effect: '抽2枚棋子，再放回2枚' },
   { id: 'eagle', name: '老鷹', chain: 1, level: 3, trigger: '移動', effect: '帶著下方1枚棋子移動' },
@@ -96,7 +96,23 @@ function resolvePendingEffects(room, actor) {
         for(let i=0;i<2&&room.bag.length;i++)drawn.push(room.bag.pop());
         if(drawn.length){room.pendingEffect={type:'seal-select',playerId:actor.id,pieceId:exposed.uid,drawn};note(room,'海豹觸發揭露效果，抽取棋子並選擇一枚放到海豹下方。');return;}
       }
+      if(exposed.animal==='python'){
+        const targets=adjacentCells(task.cell).filter(cell=>room.board[cell].length);
+        if(targets.length){room.pendingEffect={type:'python-collect',playerId:actor.id,pieceId:exposed.uid,sources:targets,targets:targets.slice()};note(room,'蟒蛇觸發揭露效果，選擇相鄰棋子的收取順序。');return;}
+      }
       // Other reveal effects are handled by their effect-specific resolvers as they are implemented.
+      continue;
+    }
+    if(task.type==='reveal-group'){
+      const candidates=task.candidates.filter(({cell,pieceId})=>{
+        const top=room.board[cell].at(-1);
+        return top?.uid===pieceId&&!room.effectSeen.has(pieceId)&&animals.find(a=>a.id===top.animal)?.trigger==='揭露';
+      });
+      if(candidates.length>1){
+        room.pendingEffect={type:'reveal-choice',playerId:actor.id,candidates,targets:candidates.map(c=>c.cell)};
+        note(room,'多枚棋子同時觸發揭露效果，請選擇一個效果。');return;
+      }
+      if(candidates.length===1)room.effectQueue.unshift({type:'reveal',...candidates[0]});
       continue;
     }
     if(task.type==='after-move'){
@@ -166,6 +182,27 @@ function handle(room,p,msg){
       room.board[msg.to].push(piece);room.pendingEffect=null;
       room.active??={created:false,moved:true};room.active.moved=true;
       note(room,`${p.name}觸發磷蝦效果，將一枚磷蝦放到空格。`);
+      resolvePendingEffects(room,p);broadcast(room);return;
+    }
+    if(pending.type==='reveal-choice'){
+      const chosen=pending.candidates.find(candidate=>candidate.cell===msg.to);
+      const top=chosen&&room.board[chosen.cell].at(-1);
+      if(!chosen||top?.uid!==chosen.pieceId)return;
+      room.pendingEffect=null;room.effectQueue.unshift({type:'reveal',...chosen});
+      note(room,`${p.name}選擇觸發一個揭露效果。`);
+      resolvePendingEffects(room,p);broadcast(room);return;
+    }
+    if(pending.type==='python-collect'){
+      if(!pending.targets.includes(msg.to))return;
+      const source=room.board[msg.to],moved=source.at(-1),python=findPiece(room,pending.pieceId);
+      if(!moved||!python)return;
+      source.pop();const stack=room.board[python.cell],currentPython=stack.findIndex(piece=>piece.uid===pending.pieceId);
+      stack.splice(currentPython,0,moved);
+      pending.targets=pending.targets.filter(cell=>cell!==msg.to);
+      note(room,'蟒蛇將一枚相鄰棋子的最上方棋子收至自身下方。');
+      if(pending.targets.length){broadcast(room);return;}
+      const candidates=pending.sources.map(cell=>({cell,pieceId:room.board[cell].at(-1)?.uid})).filter(c=>c.pieceId);
+      room.pendingEffect=null;room.effectQueue.unshift({type:'reveal-group',candidates});
       resolvePendingEffects(room,p);broadcast(room);return;
     }
     if(pending.type==='weasel-select'){
