@@ -25,7 +25,7 @@ function publicState(room, viewerId) {
   return { code:room.code, started:room.started, hostId:room.hostId, turn:room.turn, active:room.active,
     players:room.players.map(({id,name,hand,color,connected})=>({id,name,hand:id===viewerId?hand:[],handCount:hand.length,color,connected})),
     board:room.board, bagCount:room.bag.length, log:room.log.slice(-8), winner:room.winner,
-    pendingEffect:room.pendingEffect?{type:room.pendingEffect.type,playerId:room.pendingEffect.playerId,from:room.pendingEffect.from,targets:room.pendingEffect.targets,...(room.pendingEffect.type==='fox-return'&&room.pendingEffect.playerId===viewerId?{count:room.pendingEffect.count}:{})}:null };
+    pendingEffect:room.pendingEffect?{type:room.pendingEffect.type,playerId:room.pendingEffect.playerId,from:room.pendingEffect.from,targets:room.pendingEffect.targets,...(room.pendingEffect.type==='fox-return'&&room.pendingEffect.playerId===viewerId?{count:room.pendingEffect.count}:{}),...(room.pendingEffect.type==='seal-select'&&room.pendingEffect.playerId===viewerId?{drawn:room.pendingEffect.drawn}:{})}:null };
 }
 function note(room, text) { room.log.push(text); }
 function draw(room, player, n=1) { for(let i=0;i<n && room.bag.length;i++) player.hand.push(room.bag.pop()); }
@@ -90,6 +90,11 @@ function resolvePendingEffects(room, actor) {
       if(exposed.animal==='fox'){
         const count=Math.min(2,room.bag.length);
         if(count){draw(room,actor,count);room.pendingEffect={type:'fox-return',playerId:actor.id,count};note(room,'赤狐觸發揭露效果，抽取棋子並選擇放回抽袋。');return;}
+      }
+      if(exposed.animal==='seal'){
+        const drawn=[];
+        for(let i=0;i<2&&room.bag.length;i++)drawn.push(room.bag.pop());
+        if(drawn.length){room.pendingEffect={type:'seal-select',playerId:actor.id,pieceId:exposed.uid,drawn};note(room,'海豹觸發揭露效果，抽取棋子並選擇一枚放到海豹下方。');return;}
       }
       // Other reveal effects are handled by their effect-specific resolvers as they are implemented.
       continue;
@@ -197,6 +202,16 @@ function handle(room,p,msg){
     for(const animal of msg.animals){const index=p.hand.indexOf(animal);returned.push(animal);p.hand.splice(index,1);}
     room.bag.push(...returned);shuffle(room.bag);room.pendingEffect=null;
     note(room,`${p.name}完成赤狐效果。`);
+    resolvePendingEffects(room,p);broadcast(room);return;
+  }
+  if(msg.type==='sealChoose'){
+    const pending=room.pendingEffect;
+    if(!pending||pending.type!=='seal-select'||pending.playerId!==p.id||!Number.isInteger(msg.choice)||msg.choice<0||msg.choice>=pending.drawn.length)return;
+    const seal=findPiece(room,pending.pieceId);if(!seal){room.bag.push(...pending.drawn);shuffle(room.bag);room.pendingEffect=null;resolvePendingEffects(room,p);broadcast(room);return;}
+    const chosen=pending.drawn[msg.choice],returned=pending.drawn.filter((_,i)=>i!==msg.choice);
+    const species=animals.find(a=>a.id===chosen),piece={uid:room.nextPieceId++,animal:chosen,...(species.level===0?{}:{level:species.level}),owner:p.id};
+    room.board[seal.cell].splice(seal.index,0,piece);room.bag.push(...returned);shuffle(room.bag);room.pendingEffect=null;
+    note(room,`${p.name}完成海豹效果。`);
     resolvePendingEffects(room,p);broadcast(room);return;
   }
   if(msg.type==='start'){
