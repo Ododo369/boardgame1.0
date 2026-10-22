@@ -24,7 +24,8 @@ function broadcast(room) { const data = JSON.stringify({ type:'state', state: pu
 function publicState(room) {
   return { code:room.code, started:room.started, hostId:room.hostId, turn:room.turn, active:room.active,
     players:room.players.map(({id,name,hand,color,connected})=>({id,name,hand,color,connected})),
-    board:room.board, bagCount:room.bag.length, log:room.log.slice(-8), winner:room.winner };
+    board:room.board, bagCount:room.bag.length, log:room.log.slice(-8), winner:room.winner,
+    pendingEffect:room.pendingEffect?{type:room.pendingEffect.type,playerId:room.pendingEffect.playerId,from:room.pendingEffect.from,targets:room.pendingEffect.targets}:null };
 }
 function note(room, text) { room.log.push(text); }
 function draw(room, player, n=1) { for(let i=0;i<n && room.bag.length;i++) player.hand.push(room.bag.pop()); }
@@ -51,15 +52,54 @@ function canCreate(room, animalId, cell) {
   if(animalId==='chameleon') return pieceLevel(top)<3;
   return pieceLevel(top)===a.level-1;
 }
-function placeMovedPiece(room, piece, targetCell) {
-  const target=room.board[targetCell];
-  target.push(piece);
-  if(piece.animal==='mole'){
-    target.pop();
-    target.unshift(piece);
-    return true;
+function adjacentCells(cell) {
+  const x=cell%3,y=Math.floor(cell/3),result=[];
+  if(x>0)result.push(cell-1);if(x<2)result.push(cell+1);if(y>0)result.push(cell-3);if(y<2)result.push(cell+3);
+  return result;
+}
+function queueReveal(room, cell, front=false) {
+  const piece=room.board[cell].at(-1);
+  if(!piece)return;
+  const species=animals.find(a=>a.id===piece.animal);
+  if(species?.trigger==='揭露'){
+    const task={type:'reveal',cell,pieceId:piece.uid};
+    if(front)room.effectQueue.unshift(task);else room.effectQueue.push(task);
   }
-  return false;
+}
+function findPiece(room, uid) {
+  for(let cell=0;cell<room.board.length;cell++){
+    const index=room.board[cell].findIndex(piece=>piece.uid===uid);
+    if(index>=0)return {cell,index,piece:room.board[cell][index]};
+  }
+  return null;
+}
+function placeMovedPiece(room, piece, targetCell) {
+  room.board[targetCell].push(piece);
+}
+function resolvePendingEffects(room, actor) {
+  while(room.effectQueue.length){
+    const task=room.effectQueue.shift();
+    if(task.type==='reveal'){
+      const exposed=room.board[task.cell].at(-1);
+      if(!exposed||exposed.uid!==task.pieceId||room.effectSeen.has(task.pieceId))continue;
+      room.effectSeen.add(task.pieceId);
+      if(exposed.animal==='rabbit'){
+        room.pendingEffect={type:'rabbit-move',playerId:actor.id,pieceId:exposed.uid,from:task.cell,targets:adjacentCells(task.cell)};
+        return;
+      }
+      // Other reveal effects are handled by their effect-specific resolvers as they are implemented.
+      continue;
+    }
+    if(task.type==='after-move'){
+      const found=findPiece(room,task.pieceId);
+      if(found&&found.piece.animal==='mole'&&found.cell===task.target){
+        const [mole]=room.board[found.cell].splice(found.index,1);
+        room.board[found.cell].unshift(mole);
+        note(room,'地鼠移動後觸發效果，移至目標格最下方。');
+      }
+    }
+  }
+  finishAction(room,actor);
 }
 function finishAction(room, p) {
   if(room.active?.created && room.active?.moved){
@@ -92,22 +132,34 @@ function resolveLines(room, actor) {
   }
 }
 function handle(room,p,msg){
+  if(msg.type==='effectMove'){
+    const pending=room.pendingEffect;
+    if(!pending||pending.type!=='rabbit-move'||pending.playerId!==p.id||!pending.targets.includes(msg.to))return;
+    const piece=room.board[pending.from].at(-1);
+    if(!piece||piece.uid!==pending.pieceId){room.pendingEffect=null;resolvePendingEffects(room,p);broadcast(room);return;}
+    room.board[pending.from].pop();room.board[msg.to].push(piece);room.pendingEffect=null;
+    note(room,`${animals.find(a=>a.id===piece.animal).name}揭露後移動到相鄰格。`);
+    queueReveal(room,pending.from,true);
+    resolvePendingEffects(room,p);broadcast(room);return;
+  }
   if(msg.type==='start'){
     if(p.id===room.hostId && room.players.length>=2 && !room.started){start(room);broadcast(room);}
     return;
   }
+  if(room.pendingEffect)return;
   if(!room.started || room.players[room.turn]?.id!==p.id) return;
   if(msg.type==='create' && !room.active?.created && p.hand.includes(msg.animal) && canCreate(room,msg.animal,msg.cell)) {
-    p.hand.splice(p.hand.indexOf(msg.animal),1); room.board[msg.cell].push({animal:msg.animal,...(msg.animal==='chameleon'?{}:{level:animals.find(a=>a.id===msg.animal).level}),owner:p.id}); room.active??={created:false,moved:false};room.active.created=true;
-    note(room,`${p.name}創造了${animals.find(a=>a.id===msg.animal).name}。`); finishAction(room,p);
+    p.hand.splice(p.hand.indexOf(msg.animal),1); const piece={uid:room.nextPieceId++,animal:msg.animal,...(msg.animal==='chameleon'?{}:{level:animals.find(a=>a.id===msg.animal).level}),owner:p.id}; room.board[msg.cell].push(piece); room.active??={created:false,moved:false};room.active.created=true;
+    room.effectQueue=[];room.effectSeen=new Set();queueReveal(room,msg.cell);note(room,`${p.name}創造了${animals.find(a=>a.id===msg.animal).name}。`);resolvePendingEffects(room,p);
   }
   if(msg.type==='move' && !room.active?.moved && Number.isInteger(msg.from) && Number.isInteger(msg.to) && msg.from>=0 && msg.from<9 && msg.to>=0 && msg.to<9 && Math.abs(msg.from%3-msg.to%3)+Math.abs(Math.floor(msg.from/3)-Math.floor(msg.to/3))===1 && room.board[msg.from].length){
     const piece=room.board[msg.from].pop(); const species=animals.find(a=>a.id===piece.animal);
     if(species.id==='chameleon'||species.level>0){
-      if(placeMovedPiece(room,piece,msg.to))note(room,'地鼠移動後觸發效果，移至目標格最下方。');
+      placeMovedPiece(room,piece,msg.to);
       room.active??={created:false,moved:false};room.active.moved=true;
-      if(species.id==='eagle'&&room.board[msg.from].length){const carried=room.board[msg.from].pop();if(placeMovedPiece(room,carried,msg.to))note(room,'被老鷹帶動的地鼠觸發效果，移至目標格最下方。');}
-      note(room,`${p.name}移動了${species.name}。`); finishAction(room,p);
+      if(species.id==='eagle'&&room.board[msg.from].length){const carried=room.board[msg.from].pop();placeMovedPiece(room,carried,msg.to);}
+      room.effectQueue=[];room.effectSeen=new Set();queueReveal(room,msg.from);if(species.trigger==='移動')room.effectQueue.push({type:'after-move',pieceId:piece.uid,target:msg.to});
+      note(room,`${p.name}移動了${species.name}。`);resolvePendingEffects(room,p);
     } else room.board[msg.from].push(piece);
   }
   if(msg.type==='skip' && !room.active){draw(room,p,1);room.turn=(room.turn+1)%room.players.length;note(room,`${p.name}無法完成行動，抽取1枚棋子並跳過。`);}
@@ -117,7 +169,7 @@ const server=http.createServer((req,res)=>{const u=new URL(req.url,'http://local
 const wss=new WebSocketServer({server});
 wss.on('connection',socket=>{let player=null,room=null;socket.on('message',raw=>{let m;try{m=JSON.parse(raw);}catch{return;}
   if(m.type==='createRoom'||m.type==='joinRoom'){const name=String(m.name||'玩家').trim().slice(0,16)||'玩家';let r;
-    if(m.type==='createRoom'){let c;do{c=code();}while(rooms.has(c));r={code:c,players:[],board:Array.from({length:9},()=>[]),bag:[],started:false,turn:0,active:null,hostId:null,log:[],winner:null};rooms.set(c,r);}
+    if(m.type==='createRoom'){let c;do{c=code();}while(rooms.has(c));r={code:c,players:[],board:Array.from({length:9},()=>[]),bag:[],started:false,turn:0,active:null,hostId:null,log:[],winner:null,pendingEffect:null,effectQueue:[],effectSeen:new Set(),nextPieceId:1};rooms.set(c,r);}
     else r=rooms.get(String(m.code||'').toUpperCase());
     if(!r){socket.send(JSON.stringify({type:'error',message:'找不到這個房間代碼。'}));return;}
     if(r.started||r.players.length>=4){socket.send(JSON.stringify({type:'error',message:'房間已開始或人數已滿。'}));return;}
