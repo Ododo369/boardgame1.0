@@ -11,7 +11,7 @@ const animals = [
   { id: 'python', name: '蟒蛇', chain: 0, level: 3, trigger: '揭露', effect: '將所有相鄰格最上方棋子依玩家選擇順序收至自身下方' },
   { id: 'rabbit', name: '兔子', chain: 1, level: 1, trigger: '揭露', effect: '自身移動一次' },
   { id: 'fox', name: '赤狐', chain: 1, level: 2, trigger: '揭露', effect: '抽2枚棋子，再放回2枚' },
-  { id: 'eagle', name: '老鷹', chain: 1, level: 3, trigger: '移動', effect: '移動後將自身與下方棋子一起放到任意格最上方，堆疊順序不變' },
+  { id: 'eagle', name: '老鷹', chain: 1, level: 3, trigger: '移動', effect: '移動後將自身與下方棋子作為一組放到任意格最上方，順序不變；被帶棋子不觸發移動或揭露效果' },
   { id: 'krill', name: '磷蝦', chain: 2, level: 1, trigger: '移動', effect: '將手中的磷蝦放到空格' },
   { id: 'seal', name: '海豹', chain: 2, level: 2, trigger: '揭露', effect: '抽2枚，選1枚放在自身下方' },
   { id: 'orca', name: '虎鯨', chain: 2, level: 3, trigger: '揭露', effect: '將場上1枚棋子拿到手中' },
