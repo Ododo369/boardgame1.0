@@ -15,7 +15,7 @@ const animals = [
   { id: 'krill', name: '磷蝦', chain: 2, level: 1, trigger: '移動', effect: '將手中的磷蝦放到空格' },
   { id: 'seal', name: '海豹', chain: 2, level: 2, trigger: '揭露', effect: '抽2枚，選1枚放在自身下方' },
   { id: 'orca', name: '虎鯨', chain: 2, level: 3, trigger: '揭露', effect: '將場上1枚棋子拿到手中' },
-  { id: 'chameleon', name: '變色龍', chain: 3, level: 0, trigger: '無', effect: '創造時選擇等級一、二或三；沒有移動或揭露觸發效果' },
+  { id: 'chameleon', name: '變色龍', chain: 3, level: 0, trigger: '無', effect: '可視為任意等級；沒有移動或揭露觸發效果' },
 ];
 const colors = ['#eb785d', '#4c9b8a', '#6384d8', '#d69a3d'];
 const code = () => Math.random().toString(36).slice(2, 6).toUpperCase();
@@ -42,12 +42,14 @@ function start(room) {
 function pieceLevel(piece) {
   return piece.level ?? animals.find(x=>x.id===piece.animal)?.level ?? 0;
 }
-function canCreate(room, animalId, cell, chosenLevel) {
+function canCreate(room, animalId, cell) {
   const a=animals.find(x=>x.id===animalId); if(!a || !Number.isInteger(cell) || cell<0 || cell>=room.board.length) return false;
-  const level=animalId==='chameleon'?chosenLevel:a.level;
-  if(![1,2,3].includes(level)) return false;
-  const stack=room.board[cell]; if(level===1) return stack.length===0;
-  return stack.length>0 && pieceLevel(stack.at(-1))===level-1;
+  const stack=room.board[cell]; if(a.level===1) return stack.length===0;
+  if(!stack.length) return animalId==='chameleon';
+  const top=stack.at(-1);
+  if(top.animal==='chameleon') return true;
+  if(animalId==='chameleon') return pieceLevel(top)<3;
+  return pieceLevel(top)===a.level-1;
 }
 function finishAction(room, p) {
   if(room.active?.created && room.active?.moved){
@@ -84,8 +86,8 @@ function handle(room,p,msg){
     return;
   }
   if(!room.started || room.players[room.turn]?.id!==p.id) return;
-  if(msg.type==='create' && !room.active?.created && p.hand.includes(msg.animal) && canCreate(room,msg.animal,msg.cell,msg.level)) {
-    p.hand.splice(p.hand.indexOf(msg.animal),1); room.board[msg.cell].push({animal:msg.animal,level:msg.animal==='chameleon'?msg.level:animals.find(a=>a.id===msg.animal).level,owner:p.id}); room.active??={created:false,moved:false};room.active.created=true;
+  if(msg.type==='create' && !room.active?.created && p.hand.includes(msg.animal) && canCreate(room,msg.animal,msg.cell)) {
+    p.hand.splice(p.hand.indexOf(msg.animal),1); room.board[msg.cell].push({animal:msg.animal,...(msg.animal==='chameleon'?{}:{level:animals.find(a=>a.id===msg.animal).level}),owner:p.id}); room.active??={created:false,moved:false};room.active.created=true;
     note(room,`${p.name}創造了${animals.find(a=>a.id===msg.animal).name}。`); finishAction(room,p);
   }
   if(msg.type==='move' && !room.active?.moved && Number.isInteger(msg.from) && Number.isInteger(msg.to) && msg.from>=0 && msg.from<9 && msg.to>=0 && msg.to<9 && Math.abs(msg.from%3-msg.to%3)+Math.abs(Math.floor(msg.from/3)-Math.floor(msg.to/3))===1 && room.board[msg.from].length){
