@@ -53,8 +53,9 @@ function canCreate(room, animalId, cell) {
 }
 function finishAction(room, p) {
   if(room.active?.created && room.active?.moved){
-    room.active=null; room.turn=(room.turn+1)%room.players.length;
+    room.active=null;
     resolveLines(room,p);
+    room.turn=(room.turn+1)%room.players.length;
     room.players.forEach(q=>{ if(q.hand.length>=8){note(room,`${q.name}手牌達8枚，遭淘汰。`);q.eliminated=true;room.bag.push(...q.hand);q.hand=[];} });
     room.players=room.players.filter(q=>!q.eliminated);
     if(room.players.length===1){room.winner=room.players[0].name;note(room,`${room.winner}獲勝！`);}
@@ -70,7 +71,7 @@ function resolveLines(room, actor) {
     if(!isChameleonLine){
       const species=tops.map(t=>animals.find(a=>a.id===t.animal));
       if(species.some(a=>!a||a.chain>=3)||!species.every(a=>a.chain===species[0].chain)) continue;
-      const levels=species.map((a,i)=>pieceLevel(tops[i])).sort((a,b)=>a-b);
+      const levels=species.map(a=>a.level).sort((a,b)=>a-b);
       if(levels.join(',')!=='1,2,3') continue;
       chain=species[0].chain;
     }
