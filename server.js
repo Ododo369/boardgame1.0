@@ -96,6 +96,7 @@ function resolvePendingEffects(room, actor) {
         const [mole]=room.board[found.cell].splice(found.index,1);
         room.board[found.cell].unshift(mole);
         note(room,'地鼠移動後觸發效果，移至目標格最下方。');
+        queueReveal(room,task.target,true);
       }
     }
   }
