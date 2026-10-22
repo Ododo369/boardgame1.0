@@ -148,15 +148,26 @@ function resolvePendingEffects(room, actor) {
   }
   finishAction(room,actor);
 }
+function advanceTurn(room, p) {
+  const currentIndex=room.players.findIndex(q=>q.id===p.id);
+  const eliminated=p.hand.length>=6;
+  if(eliminated){
+    note(room,`${p.name}回合結束時手牌達${p.hand.length}枚（至少6枚），遭淘汰，手牌放回抽袋。`);
+    room.bag.push(...p.hand);p.hand=[];shuffle(room.bag);
+    room.players.splice(currentIndex,1);
+  }
+  if(room.players.length===1){room.winner=room.players[0].name;note(room,`${room.winner}獲勝！`);return;}
+  if(room.players.length){
+    room.turn=eliminated?currentIndex%room.players.length:(currentIndex+1)%room.players.length;
+    draw(room,room.players[room.turn]);
+    note(room,`${room.players[room.turn].name}的回合開始。`);
+  }
+}
 function finishAction(room, p) {
   if(room.active?.created && room.active?.moved){
     room.active=null;
     resolveLines(room,p);
-    room.turn=(room.turn+1)%room.players.length;
-    room.players.forEach(q=>{ if(q.hand.length>=8){note(room,`${q.name}手牌達8枚，遭淘汰。`);q.eliminated=true;room.bag.push(...q.hand);q.hand=[];} });
-    room.players=room.players.filter(q=>!q.eliminated);
-    if(room.players.length===1){room.winner=room.players[0].name;note(room,`${room.winner}獲勝！`);}
-    if(room.players.length){room.turn=room.turn%room.players.length;if(!room.winner){draw(room,room.players[room.turn]);note(room,`${room.players[room.turn].name}的回合開始。`);}}
+    advanceTurn(room,p);
   }
 }
 function resolveLines(room, actor) {
@@ -310,7 +321,7 @@ function handle(room,p,msg){
       note(room,species.id==='eagle'?`${p.name}先將老鷹移到相鄰格；接著可帶著落腳格中位於老鷹下方的一枚棋子飛往任意格。`:`${p.name}移動了${species.name}。`);resolvePendingEffects(room,p);
     } else room.board[msg.from].push(piece);
   }
-  if(msg.type==='skip' && !room.active){draw(room,p,1);room.turn=(room.turn+1)%room.players.length;note(room,`${p.name}無法完成行動，抽取1枚棋子並跳過。`);}
+  if(msg.type==='skip' && !room.active){draw(room,p,1);note(room,`${p.name}無法完成行動，抽取1枚棋子並跳過。`);advanceTurn(room,p);}
   broadcast(room);
 }
 const server=http.createServer((req,res)=>{const u=new URL(req.url,'http://localhost');let file=u.pathname==='/'?'index.html':u.pathname.slice(1);if(file.includes('..')){res.writeHead(400).end();return;}const target=path.join(__dirname,file);fs.readFile(target,(err,data)=>{if(err){res.writeHead(404).end('Not found');return;}res.setHeader('Content-Type',target.endsWith('.js')?'text/javascript; charset=utf-8':target.endsWith('.css')?'text/css; charset=utf-8':'text/html; charset=utf-8');res.end(data);});});
