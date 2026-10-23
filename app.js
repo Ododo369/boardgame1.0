@@ -11,10 +11,12 @@ function animateDraws(before,after){
  const oldPlayer=before.players?.find(p=>p.id===me),newPlayer=after.players?.find(p=>p.id===me);
  if(!oldPlayer||!newPlayer||!Number.isFinite(before.bagCount)||!Number.isFinite(after.bagCount))return;
  const openingDeal=!before.started&&after.started;
- const foxDraw=after.pendingEffect?.type==='fox-return'&&after.pendingEffect.playerId===me;
+ const foxDraw=after.pendingEffect?.type==='fox-return'&&after.pendingEffect.playerId===me&&before.pendingEffect?.type!=='fox-return';
  const remaining=[...oldPlayer.hand],added=[];
  for(const animal of newPlayer.hand){const index=remaining.indexOf(animal);if(index>=0)remaining.splice(index,1);else added.push(animal);}
- let destinations=added.map((animal,index)=>({animal,selector:`#hand [data-hand="${oldPlayer.hand.length+index}"]`,hide:true}));
+ if(foxDraw){const count=Math.min(after.pendingEffect.count||0,newPlayer.hand.length);added.splice(0,added.length,...newPlayer.hand.slice(-count));}
+ const firstNewHandIndex=foxDraw?newPlayer.hand.length-added.length:oldPlayer.hand.length;
+ let destinations=added.map((animal,index)=>({animal,selector:`#hand [data-hand="${firstNewHandIndex+index}"]`,hide:true}));
  if(!destinations.length&&after.pendingEffect?.type==='seal-select'&&after.pendingEffect.playerId===me){
   const oldDrawn=before.pendingEffect?.type==='seal-select'&&before.pendingEffect.playerId===me?before.pendingEffect.drawn||[]:[];
   const waiting=[...oldDrawn];
