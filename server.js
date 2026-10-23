@@ -25,7 +25,8 @@ function publicState(room, viewerId) {
   return { code:room.code, started:room.started, hostId:room.hostId, turn:room.turn, active:room.active,
     players:room.players.map(({id,name,hand,color,connected})=>({id,name,hand:id===viewerId?hand:[],handCount:hand.length,color,connected})),
     board:room.board, bagCount:room.bag.length, log:room.log.slice(-8), winner:room.winner,
-    pendingEffect:room.pendingEffect?{type:room.pendingEffect.type,playerId:room.pendingEffect.playerId,pieceId:room.pendingEffect.pieceId,from:room.pendingEffect.from,targets:room.pendingEffect.targets,...(room.pendingEffect.type==='fox-return'&&room.pendingEffect.playerId===viewerId?{count:room.pendingEffect.count}:{}),...(room.pendingEffect.type==='seal-select'&&room.pendingEffect.playerId===viewerId?{drawn:room.pendingEffect.drawn}:{})}:null };
+    pendingEffect:room.pendingEffect?{type:room.pendingEffect.type,playerId:room.pendingEffect.playerId,pieceId:room.pendingEffect.pieceId,from:room.pendingEffect.from,targets:room.pendingEffect.targets,...(room.pendingEffect.type==='fox-return'&&room.pendingEffect.playerId===viewerId?{count:room.pendingEffect.count}:{}),...(room.pendingEffect.type==='seal-select'&&room.pendingEffect.playerId===viewerId?{drawn:room.pendingEffect.drawn}:{})}:null,
+    lineEvents:room.lineEvents||[] };
 }
 function note(room, text) { room.log.push(text); }
 function draw(room, player, n=1) { for(let i=0;i<n && room.bag.length;i++) player.hand.push(room.bag.pop()); }
@@ -187,6 +188,9 @@ function resolveLines(room, actor) {
     }
     const returned=cells.map(c=>room.board[c].pop().animal);
     room.bag.push(...returned);
+    const event={id:room.nextLineEventId++,cells:cells.slice(),kind:isChameleonLine?'chameleon':'chain'};
+    room.lineEvents.push(event);
+    setTimeout(()=>{room.lineEvents=room.lineEvents.filter(e=>e.id!==event.id);broadcast(room);},1500);
     room.players.forEach(q=>{if(q!==actor)draw(room,q,1);});
     note(room,isChameleonLine?'三枚變色龍連成一線，棋子回到抽袋。':`食物鏈${chain+1}以一、二、三級棋子連成一線，棋子回到抽袋。`);
   }
@@ -330,7 +334,7 @@ const server=http.createServer((req,res)=>{const u=new URL(req.url,'http://local
 const wss=new WebSocketServer({server});
 wss.on('connection',socket=>{let player=null,room=null;socket.on('message',raw=>{let m;try{m=JSON.parse(raw);}catch{return;}
   if(m.type==='createRoom'||m.type==='joinRoom'){const name=String(m.name||'玩家').trim().slice(0,16)||'玩家';let r;
-    if(m.type==='createRoom'){let c;do{c=code();}while(rooms.has(c));r={code:c,players:[],board:Array.from({length:9},()=>[]),bag:[],started:false,turn:0,active:null,hostId:null,log:[],winner:null,pendingEffect:null,effectQueue:[],effectSeen:new Set(),nextPieceId:1};rooms.set(c,r);}
+    if(m.type==='createRoom'){let c;do{c=code();}while(rooms.has(c));r={code:c,players:[],board:Array.from({length:9},()=>[]),bag:[],started:false,turn:0,active:null,hostId:null,log:[],winner:null,pendingEffect:null,effectQueue:[],effectSeen:new Set(),nextPieceId:1,lineEvents:[],nextLineEventId:1};rooms.set(c,r);}
     else r=rooms.get(String(m.code||'').toUpperCase());
     if(!r){socket.send(JSON.stringify({type:'error',message:'找不到這個房間代碼。'}));return;}
     if(r.started||r.players.length>=4){socket.send(JSON.stringify({type:'error',message:'房間已開始或人數已滿。'}));return;}
