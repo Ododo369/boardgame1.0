@@ -11,6 +11,7 @@ function animateDraws(before,after){
  const oldPlayer=before.players?.find(p=>p.id===me),newPlayer=after.players?.find(p=>p.id===me);
  if(!oldPlayer||!newPlayer||!Number.isFinite(before.bagCount)||!Number.isFinite(after.bagCount))return;
  const openingDeal=!before.started&&after.started;
+ const foxDraw=after.pendingEffect?.type==='fox-return'&&after.pendingEffect.playerId===me;
  const remaining=[...oldPlayer.hand],added=[];
  for(const animal of newPlayer.hand){const index=remaining.indexOf(animal);if(index>=0)remaining.splice(index,1);else added.push(animal);}
  let destinations=added.map((animal,index)=>({animal,selector:`#hand [data-hand="${oldPlayer.hand.length+index}"]`,hide:true}));
@@ -19,7 +20,7 @@ function animateDraws(before,after){
   const waiting=[...oldDrawn];
   (after.pendingEffect.drawn||[]).forEach((animal,index)=>{const found=waiting.indexOf(animal);if(found>=0)waiting.splice(found,1);else destinations.push({animal,selector:`#hand [data-seal-choice="${index}"]`,hide:false});});
  }
- if(!destinations.length||(!openingDeal&&after.bagCount>=before.bagCount))return;
+ if(!destinations.length||(!openingDeal&&!foxDraw&&after.bagCount>=before.bagCount))return;
  const bag=$('#bag-count'),bagRect=bag?.getBoundingClientRect();if(!bagRect)return;
  const fromX=bagRect.left+bagRect.width/2,fromY=bagRect.top+bagRect.height/2;
  destinations.forEach(({animal,selector,hide},index)=>{const target=$(selector);if(!target)return;const rect=target.getBoundingClientRect(),fly=document.createElement('span');if(hide)target.closest('.hand-piece')?.classList.add('hand-arriving');fly.className='draw-fly piece';fly.innerHTML=emoji[animal];fly.style.setProperty('--c',colorFor(animal));fly.style.left=`${fromX-22}px`;fly.style.top=`${fromY-22}px`;document.body.append(fly);const dx=rect.left+rect.width/2-fromX,dy=rect.top+rect.height/2-fromY;fly.animate([{transform:'translate(0,0) scale(.8)',opacity:1},{transform:`translate(${dx*.55}px,${dy*.55-48}px) scale(1.2)`,opacity:1,offset:.62},{transform:`translate(${dx}px,${dy}px) scale(.65)`,opacity:0}],{duration:1320,delay:index*240,easing:'cubic-bezier(.2,.75,.25,1)'}).onfinish=()=>{fly.remove();if(hide)target.closest('.hand-piece')?.classList.remove('hand-arriving');};});
