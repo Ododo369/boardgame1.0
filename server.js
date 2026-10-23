@@ -25,7 +25,7 @@ function publicState(room, viewerId) {
   return { code:room.code, started:room.started, hostId:room.hostId, turn:room.turn, active:room.active,
     players:room.players.map(({id,name,hand,color,connected})=>({id,name,hand:id===viewerId?hand:[],handCount:hand.length,color,connected})),
     board:room.board, bagCount:room.bag.length, log:room.log.slice(-8), winner:room.winner,
-    pendingEffect:room.pendingEffect?{type:room.pendingEffect.type,playerId:room.pendingEffect.playerId,from:room.pendingEffect.from,targets:room.pendingEffect.targets,...(room.pendingEffect.type==='fox-return'&&room.pendingEffect.playerId===viewerId?{count:room.pendingEffect.count}:{}),...(room.pendingEffect.type==='seal-select'&&room.pendingEffect.playerId===viewerId?{drawn:room.pendingEffect.drawn}:{})}:null };
+    pendingEffect:room.pendingEffect?{type:room.pendingEffect.type,playerId:room.pendingEffect.playerId,pieceId:room.pendingEffect.pieceId,from:room.pendingEffect.from,targets:room.pendingEffect.targets,...(room.pendingEffect.type==='fox-return'&&room.pendingEffect.playerId===viewerId?{count:room.pendingEffect.count}:{}),...(room.pendingEffect.type==='seal-select'&&room.pendingEffect.playerId===viewerId?{drawn:room.pendingEffect.drawn}:{})}:null };
 }
 function note(room, text) { room.log.push(text); }
 function draw(room, player, n=1) { for(let i=0;i<n && room.bag.length;i++) player.hand.push(room.bag.pop()); }
@@ -57,12 +57,12 @@ function adjacentCells(cell) {
   if(x>0)result.push(cell-1);if(x<2)result.push(cell+1);if(y>0)result.push(cell-3);if(y<2)result.push(cell+3);
   return result;
 }
-function queueReveal(room, cell, front=false) {
+function queueReveal(room, cell, front=false, reason='reveal') {
   const piece=room.board[cell].at(-1);
   if(!piece)return;
   const species=animals.find(a=>a.id===piece.animal);
   if(species?.trigger==='揭露'){
-    const task={type:'reveal',cell,pieceId:piece.uid};
+    const task={type:'reveal',cell,pieceId:piece.uid,reason};
     if(front)room.effectQueue.unshift(task);else room.effectQueue.push(task);
   }
 }
@@ -83,13 +83,15 @@ function resolvePendingEffects(room, actor) {
       const exposed=room.board[task.cell].at(-1);
       if(!exposed||exposed.uid!==task.pieceId||room.effectSeen.has(task.pieceId))continue;
       room.effectSeen.add(task.pieceId);
+      const revealedSpecies=animals.find(a=>a.id===exposed.animal);
+      note(room,task.reason==='create'?`第${task.cell+1}格創造的${revealedSpecies?.name||'棋子'}觸發揭露效果。`:`第${task.cell+1}格的${revealedSpecies?.name||'棋子'}被揭露。`);
       if(exposed.animal==='rabbit'){
         room.pendingEffect={type:'rabbit-move',playerId:actor.id,pieceId:exposed.uid,from:task.cell,targets:adjacentCells(task.cell)};
         return;
       }
       if(exposed.animal==='fox'){
         const count=Math.min(2,room.bag.length);
-        if(count){draw(room,actor,count);room.pendingEffect={type:'fox-return',playerId:actor.id,count};note(room,'赤狐觸發揭露效果，抽取棋子並選擇放回抽袋。');return;}
+        if(count){draw(room,actor,count);room.pendingEffect={type:'fox-return',playerId:actor.id,pieceId:exposed.uid,count};note(room,'赤狐觸發揭露效果，抽取棋子並選擇放回抽袋。');return;}
       }
       if(exposed.animal==='seal'){
         const drawn=[];
@@ -307,7 +309,7 @@ function handle(room,p,msg){
     else if(!canCreate(room,msg.animal,msg.cell)){note(room,'無法創造：所選格不符合放置規則。');}
     else {
       p.hand.splice(p.hand.indexOf(msg.animal),1); const piece={uid:room.nextPieceId++,animal:msg.animal,...(msg.animal==='chameleon'?{}:{level:animals.find(a=>a.id===msg.animal).level}),owner:p.id}; room.board[msg.cell].push(piece); room.active??={created:false,moved:false};room.active.created=true;
-      room.effectQueue=[];room.effectSeen=new Set();queueReveal(room,msg.cell);note(room,`${p.name}創造了${animals.find(a=>a.id===msg.animal).name}。`);resolvePendingEffects(room,p);
+      room.effectQueue=[];room.effectSeen=new Set();queueReveal(room,msg.cell,false,'create');note(room,`${p.name}創造了${animals.find(a=>a.id===msg.animal).name}。`);resolvePendingEffects(room,p);
     }
   }
   if(msg.type==='move' && !room.active?.moved && Number.isInteger(msg.from) && Number.isInteger(msg.to) && msg.from>=0 && msg.from<9 && msg.to>=0 && msg.to<9 && Math.abs(msg.from%3-msg.to%3)+Math.abs(Math.floor(msg.from/3)-Math.floor(msg.to/3))===1 && room.board[msg.from].length){
