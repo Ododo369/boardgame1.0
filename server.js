@@ -124,6 +124,12 @@ function resolvePendingEffects(room, actor) {
     }
     if(task.type==='after-move'){
       const found=findPiece(room,task.pieceId);
+      if(!found||found.cell!==task.target)continue;
+      if(room.board[found.cell].at(-1)?.uid!==task.pieceId){
+        const animal=animals.find(a=>a.id===found.piece.animal)?.name||'棋子';
+        note(room,`${animal}移動後效果結算前已被其他棋子覆蓋，因此不觸發效果。`);
+        continue;
+      }
       if(found&&found.piece.animal==='mole'&&found.cell===task.target){
         const [mole]=room.board[found.cell].splice(found.index,1);
         room.board[found.cell].unshift(mole);
