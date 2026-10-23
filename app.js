@@ -91,7 +91,7 @@ function recordBoardChanges(before,after){
  boardEffects=boardEffects.filter(effect=>effect.expiresAt>now).concat(newEffects);
  setTimeout(()=>{boardEffects=boardEffects.filter(effect=>effect.expiresAt>Date.now());if(state)render();},1020);
 }
-function colorFor(a){return ({mole:'#a98260',weasel:'#a98260',python:'#a98260',rabbit:'#d97856',fox:'#d97856',eagle:'#d97856',krill:'#4b8794',seal:'#4b8794',orca:'#4b8794',chameleon:'#8772a8'})[a]||'#71817a'}
+function colorFor(a){return ({mole:'#c6a000',weasel:'#c6a000',python:'#c6a000',rabbit:'#f00020',fox:'#f00020',eagle:'#f00020',krill:'#82cfff',seal:'#82cfff',orca:'#82cfff',chameleon:'#4b166f'})[a]||'#71817a'}
 function ownerColor(id){return state.players.find(p=>p.id===id)?.color||'#aaa'}
 function cellClick(i){if(state?.pendingEffect){if(state.pendingEffect.playerId===me&&state.pendingEffect.targets.includes(i))send({type:'effectMove',to:i});return;}if(!state?.started||state.players[state.turn]?.id!==me)return;const self=state.players.find(p=>p.id===me),s=state.board[i];if(mode==='create'&&selectedHand!==null){const animal=self.hand[selectedHand];if(canPlace(animal,i)){send({type:'create',animal,cell:i});selectedHand=null;mode='';}return;}if(mode==='move'&&selectedCell!==null){send({type:'move',from:selectedCell,to:i});selectedCell=null;mode='';return;}if(s.length){selectedCell=i;mode='move';render();}}
 function cancelSelection(){selectedHand=null;selectedCell=null;mode='';render();}
