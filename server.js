@@ -2,6 +2,7 @@ const http = require('http');
 const fs = require('fs');
 const path = require('path');
 const { WebSocketServer } = require('ws');
+const { chooseTurnPlan, chooseMove, choosePendingAction } = require('./ai');
 
 const PORT = process.env.PORT || 3000;
 const rooms = new Map();
@@ -20,10 +21,10 @@ const animals = [
 const colors = ['#eb785d', '#4c9b8a', '#6384d8', '#d69a3d'];
 const code = () => Math.random().toString(36).slice(2, 6).toUpperCase();
 const shuffle = a => { for (let i=a.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[a[i],a[j]]=[a[j],a[i]];} return a; };
-function broadcast(room) { for (const p of room.players) if (p.socket?.readyState === 1) p.socket.send(JSON.stringify({ type:'state', state: publicState(room,p.id) })); }
+function broadcast(room) { for (const p of room.players) if (p.socket?.readyState === 1) p.socket.send(JSON.stringify({ type:'state', state: publicState(room,p.id) })); scheduleBot(room); }
 function publicState(room, viewerId) {
   return { code:room.code, started:room.started, hostId:room.hostId, turn:room.turn, active:room.active,
-    players:room.players.map(({id,name,hand,color,connected})=>({id,name,hand:id===viewerId?hand:[],handCount:hand.length,color,connected})),
+    players:room.players.map(({id,name,hand,color,connected,isBot})=>({id,name,hand:id===viewerId?hand:[],handCount:hand.length,color,connected,isBot:!!isBot})),
     board:room.board, bagCount:room.bag.length, log:room.log.slice(-8), winner:room.winner,
     pendingEffect:room.pendingEffect?{type:room.pendingEffect.type,playerId:room.pendingEffect.playerId,pieceId:room.pendingEffect.pieceId,from:room.pendingEffect.from,targets:room.pendingEffect.targets,...(room.pendingEffect.type==='fox-return'&&room.pendingEffect.playerId===viewerId?{count:room.pendingEffect.count}:{}),...(room.pendingEffect.type==='seal-select'&&room.pendingEffect.playerId===viewerId?{drawn:room.pendingEffect.drawn}:{})}:null,
     lineEvents:room.lineEvents||[] };
@@ -174,7 +175,7 @@ function advanceTurn(room, p) {
 }
 function finishAction(room, p) {
   if(room.active?.created && room.active?.moved){
-    room.active=null;
+    room.active=null;room.botPlan=null;
     resolveLines(room,p);
     advanceTurn(room,p);
   }
@@ -336,15 +337,74 @@ function handle(room,p,msg){
   if(msg.type==='skip' && !room.active){draw(room,p,1);note(room,`${p.name}無法完成行動，抽取1枚棋子並跳過。`);advanceTurn(room,p);}
   broadcast(room);
 }
+function scheduleBot(room,delay=520){
+  if(!room.started||room.winner||room.botScheduled||room.botThinking)return;
+  const bot=room.players.find(player=>player.isBot);if(!bot)return;
+  const botActs=room.pendingEffect?room.pendingEffect.playerId===bot.id:room.players[room.turn]?.id===bot.id;
+  if(!botActs)return;
+  room.botScheduled=true;
+  setTimeout(()=>{room.botScheduled=false;runBotStep(room,bot);},delay);
+}
+function runBotStep(room,bot){
+  if(room.winner||!room.players.includes(bot))return;
+  const isPending=room.pendingEffect?.playerId===bot.id;
+  if(!isPending&&room.players[room.turn]?.id!==bot.id)return;
+  room.botThinking=true;
+  try{
+    if(isPending){
+      let action=choosePendingAction(room.board,bot.hand,room.pendingEffect,bot.id);
+      if(!action){
+        const pending=room.pendingEffect;
+        if(pending.type==='fox-return')action={type:'foxReturn',animals:bot.hand.slice(0,pending.count)};
+        else if(pending.type==='seal-select')action={type:'sealChoose',choice:0};
+        else if(pending.targets?.length)action={type:'effectMove',to:pending.targets[0]};
+      }
+      if(action)handle(room,bot,action);
+      return;
+    }
+    if(!room.active?.created){
+      let plan=room.botPlan?.playerId===bot.id?room.botPlan:chooseTurnPlan(room.board,bot.hand,bot.id);
+      if(!plan){handle(room,bot,{type:'skip'});return;}
+      room.botPlan={playerId:bot.id,create:plan.create,move:plan.move,order:plan.order};
+      const plannedMove=plan.move&&room.board[plan.move.from]?.at(-1)?.animal===plan.move.animal&&adjacentCells(plan.move.from).includes(plan.move.to);
+      if(plan.order==='move-first'&&!room.active?.moved){
+        const action=plannedMove?plan.move:chooseMove(room.board,bot.id);
+        if(action){handle(room,bot,{type:'move',from:action.from,to:action.to});return;}
+      }
+      if(!plan.create||!bot.hand.includes(plan.create.animal)||!canCreate(room,plan.create.animal,plan.create.cell)){
+        plan=chooseTurnPlan(room.board,bot.hand,bot.id);
+        if(!plan){handle(room,bot,{type:'skip'});return;}
+        room.botPlan={playerId:bot.id,create:plan.create,move:plan.move,order:'create-first'};
+      }
+      handle(room,bot,{type:'create',animal:room.botPlan.create.animal,cell:room.botPlan.create.cell});
+      return;
+    }
+    if(!room.active?.moved){
+      let action=room.botPlan?.playerId===bot.id?room.botPlan.move:null;
+      if(!action||!room.board[action.from]?.length||room.board[action.from].at(-1)?.animal!==action.animal||!adjacentCells(action.from).includes(action.to))action=chooseMove(room.board,bot.id);
+      room.botPlan=null;
+      if(action)handle(room,bot,{type:'move',from:action.from,to:action.to});
+      else if(!room.active?.created)handle(room,bot,{type:'skip'});
+    }
+  }catch(error){
+    console.error('AI turn failed:',error);
+  }finally{
+    room.botThinking=false;
+    scheduleBot(room,520);
+  }
+}
 const server=http.createServer((req,res)=>{const u=new URL(req.url,'http://localhost');let file=u.pathname==='/'?'index.html':u.pathname.slice(1);if(file.includes('..')){res.writeHead(400).end();return;}const target=path.join(__dirname,file);fs.readFile(target,(err,data)=>{if(err){res.writeHead(404).end('Not found');return;}res.setHeader('Content-Type',target.endsWith('.js')?'text/javascript; charset=utf-8':target.endsWith('.css')?'text/css; charset=utf-8':'text/html; charset=utf-8');res.end(data);});});
 const wss=new WebSocketServer({server});
 wss.on('connection',socket=>{let player=null,room=null;socket.on('message',raw=>{let m;try{m=JSON.parse(raw);}catch{return;}
-  if(m.type==='createRoom'||m.type==='joinRoom'){const name=String(m.name||'玩家').trim().slice(0,16)||'玩家';let r;
-    if(m.type==='createRoom'){let c;do{c=code();}while(rooms.has(c));r={code:c,players:[],board:Array.from({length:9},()=>[]),bag:[],started:false,turn:0,active:null,hostId:null,log:[],winner:null,pendingEffect:null,effectQueue:[],effectSeen:new Set(),nextPieceId:1,lineEvents:[],nextLineEventId:1};rooms.set(c,r);}
+  if(m.type==='createRoom'||m.type==='createSoloRoom'||m.type==='joinRoom'){const name=String(m.name||'玩家').trim().slice(0,16)||'玩家';const solo=m.type==='createSoloRoom';let r;
+    if(m.type==='createRoom'||solo){let c;do{c=code();}while(rooms.has(c));r={code:c,players:[],board:Array.from({length:9},()=>[]),bag:[],started:false,turn:0,active:null,hostId:null,log:[],winner:null,pendingEffect:null,effectQueue:[],effectSeen:new Set(),nextPieceId:1,lineEvents:[],nextLineEventId:1,botScheduled:false,botThinking:false,botPlan:null};rooms.set(c,r);}
     else r=rooms.get(String(m.code||'').toUpperCase());
     if(!r){socket.send(JSON.stringify({type:'error',message:'找不到這個房間代碼。'}));return;}
     if(r.started||r.players.length>=4){socket.send(JSON.stringify({type:'error',message:'房間已開始或人數已滿。'}));return;}
-    player={id:Math.random().toString(36).slice(2),name,color:colors[r.players.length],hand:[],connected:true,socket};room=r;r.players.push(player);if(!r.hostId)r.hostId=player.id;note(r,`${name}加入房間。`);socket.send(JSON.stringify({type:'joined',id:player.id}));broadcast(r);return;
+    player={id:Math.random().toString(36).slice(2),name,color:colors[r.players.length],hand:[],connected:true,socket,isBot:false};room=r;r.players.push(player);if(!r.hostId)r.hostId=player.id;
+    if(solo)r.players.push({id:`bot-${r.code}`,name:'AI 對手',color:'#7047a3',hand:[],connected:true,socket:null,isBot:true});
+    note(r,`${name}加入房間。`);socket.send(JSON.stringify({type:'joined',id:player.id}));
+    if(solo){start(r);broadcast(r);}else broadcast(r);return;
   }
   if(room&&player)handle(room,player,m);
  });socket.on('close',()=>{if(room&&player){player.connected=false;note(room,`${player.name}離線。`);broadcast(room);}});});
