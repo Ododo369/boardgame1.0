@@ -9,7 +9,7 @@ const rooms = new Map();
 const animals = [
   { id: 'mole', name: '地鼠', chain: 0, level: 1, trigger: '移動', effect: '移至該格堆疊最底部' },
   { id: 'weasel', name: '黃鼬', chain: 0, level: 2, trigger: '移動', effect: '移動自己以外的一枚棋子' },
-  { id: 'python', name: '蟒蛇', chain: 0, level: 3, trigger: '揭露', effect: '將所有相鄰格最上方棋子依玩家選擇順序收至自身下方' },
+  { id: 'python', name: '蟒蛇', chain: 0, level: 3, trigger: '揭露', effect: '選擇一個相鄰格，將該格最上方棋子收至自身下方' },
   { id: 'rabbit', name: '兔子', chain: 1, level: 1, trigger: '揭露', effect: '自身移動一次' },
   { id: 'fox', name: '赤狐', chain: 1, level: 2, trigger: '揭露', effect: '抽2枚棋子，再放回2枚' },
   { id: 'eagle', name: '老鷹', chain: 1, level: 3, trigger: '移動', effect: '先移動到相鄰格；移動後將自身與落腳格中位於自身下方的一枚棋子作為一組放到任意格最上方，順序不變；被帶棋子不觸發移動或揭露效果' },
@@ -106,7 +106,7 @@ function resolvePendingEffects(room, actor) {
       }
       if(exposed.animal==='python'){
         const targets=adjacentCells(task.cell).filter(cell=>room.board[cell].length);
-        if(targets.length){room.pendingEffect={type:'python-collect',playerId:actor.id,pieceId:exposed.uid,sources:targets,targets:targets.slice()};note(room,'蟒蛇觸發揭露效果，選擇相鄰棋子的收取順序。');return;}
+        if(targets.length){room.pendingEffect={type:'python-collect',playerId:actor.id,pieceId:exposed.uid,targets};note(room,'蟒蛇觸發揭露效果，選擇一個相鄰格收取最上方棋子。');return;}
       }
       // Other reveal effects are handled by their effect-specific resolvers as they are implemented.
       continue;
@@ -257,11 +257,9 @@ function handle(room,p,msg){
       if(!moved||!python)return;
       source.pop();const stack=room.board[python.cell],currentPython=stack.findIndex(piece=>piece.uid===pending.pieceId);
       stack.splice(currentPython,0,moved);
-      pending.targets=pending.targets.filter(cell=>cell!==msg.to);
-      note(room,'蟒蛇將一枚相鄰棋子的最上方棋子收至自身下方。');
-      if(pending.targets.length){broadcast(room);return;}
-      const candidates=pending.sources.map(cell=>({cell,pieceId:room.board[cell].at(-1)?.uid})).filter(c=>c.pieceId);
-      room.pendingEffect=null;room.effectQueue.unshift({type:'reveal-group',candidates});
+      room.pendingEffect=null;
+      note(room,'蟒蛇將所選相鄰格最上方的一枚棋子收至自身下方。');
+      queueReveal(room,msg.to,true);
       resolvePendingEffects(room,p);broadcast(room);return;
     }
     if(pending.type==='weasel-select'){
