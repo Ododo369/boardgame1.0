@@ -98,7 +98,12 @@ function bestResponseScore(board) {
   return replies.length?replies[0].wins*170+replies[0].position:0;
 }
 function chooseTurnPlan(board,hand,owner) {
-  const options=generateTurns(board,hand,owner,18);if(!options.length)return null;
+  // Orca's reveal effect takes one additional piece into the AI's hand.
+  // When the hand is already at the elimination limit, creating an orca
+  // consumes one piece and then immediately takes one back, leaving the AI
+  // at six when its turn ends. Avoid that plan whenever another plan exists.
+  const available=hand.length>=6?hand.filter(animal=>animal!=='orca'):hand;
+  const options=generateTurns(board,available,owner,18);if(!options.length)return null;
   let best=null,bestScore=-Infinity;
   for(const option of options){
     const after=cloneBoard(option.board);clearLines(after);
