@@ -18,6 +18,7 @@ const animals = [
   { id: 'orca', name: '虎鯨', chain: 2, level: 3, trigger: '揭露', effect: '被創造或揭露時，將自身以外場上1枚最上方棋子拿到手中' },
   { id: 'chameleon', name: '變色龍', chain: 3, level: 0, trigger: '無', effect: '可視為任意等級；沒有移動或揭露觸發效果' },
 ];
+const chainNames = { 0:'食物鏈一', 1:'食物鏈二', 2:'食物鏈三' };
 const colors = ['#eb785d', '#4c9b8a', '#6384d8', '#d69a3d'];
 const code = () => Math.random().toString(36).slice(2, 6).toUpperCase();
 const shuffle = a => { for (let i=a.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[a[i],a[j]]=[a[j],a[i]];} return a; };
@@ -27,7 +28,9 @@ function publicState(room, viewerId) {
     players:room.players.map(({id,name,hand,color,connected,isBot})=>({id,name,hand:id===viewerId?hand:[],handCount:hand.length,color,connected,isBot:!!isBot})),
     board:room.board, bagCount:room.bag.length, log:room.log.slice(-8), winner:room.winner,
     pendingEffect:room.pendingEffect?{type:room.pendingEffect.type,playerId:room.pendingEffect.playerId,pieceId:room.pendingEffect.pieceId,from:room.pendingEffect.from,targets:room.pendingEffect.targets,...(room.pendingEffect.type==='fox-return'&&room.pendingEffect.playerId===viewerId?{count:room.pendingEffect.count}:{}),...(room.pendingEffect.type==='seal-select'&&room.pendingEffect.playerId===viewerId?{drawn:room.pendingEffect.drawn}:{})}:null,
-    lineEvents:room.lineEvents||[], eliminationEvent:room.eliminationEvent||null };
+    lineEvents:room.lineEvents||[], eliminationEvent:room.eliminationEvent||null,
+    chainOptions:Object.entries(chainNames).map(([id,name])=>({id:Number(id),name,animals:animals.filter(a=>a.chain===Number(id)).map(a=>({id:a.id,name:a.name,level:a.level,count:a.level===1?7:a.level===2?4:2}))})),
+    selectedChains:room.selectedChains||null };
 }
 function note(room, text) { room.log.push(text); }
 function draw(room, player, n=1) { for(let i=0;i<n && room.bag.length;i++) player.hand.push(room.bag.pop()); }
@@ -38,7 +41,8 @@ function drawOpeningHand(room, player) {
 }
 function start(room) {
   const countsByLevel={1:7,2:4,3:2};
-  const animalTiles=animals.filter(a=>a.chain<3).flatMap(a=>Array(countsByLevel[a.level]).fill(a.id));
+  if(!room.selectedChains){room.selectedChains=shuffle(Object.keys(chainNames).map(Number)).slice(0,3);}
+  const animalTiles=animals.filter(a=>room.selectedChains.includes(a.chain)).flatMap(a=>Array(countsByLevel[a.level]).fill(a.id));
   room.started=true; room.bag=shuffle([...animalTiles,'chameleon','chameleon','chameleon']);
   room.players.forEach(p=>drawOpeningHand(room,p)); room.turn=Math.floor(Math.random()*room.players.length); room.active=null; draw(room,room.players[room.turn]); note(room,`遊戲開始！每位玩家的起手牌至少有一枚等級一棋子。${room.players[room.turn].name}的回合開始。`);
 }
@@ -312,6 +316,14 @@ function handle(room,p,msg){
     if(p.id===room.hostId && room.players.length>=2 && !room.started){start(room);broadcast(room);}
     return;
   }
+  if(msg.type==='selectChains'){
+    if(p.id!==room.hostId||room.started||!Array.isArray(msg.chainIds))return;
+    const valid=Object.keys(chainNames).map(Number),chosen=[...new Set(msg.chainIds)].filter(id=>valid.includes(id)).slice(0,3);
+    const remainder=shuffle(valid.filter(id=>!chosen.includes(id))).slice(0,3-chosen.length);
+    room.selectedChains=[...chosen,...remainder];
+    note(room,`本局食物鏈已選定：${room.selectedChains.map(id=>chainNames[id]).join('、')}。`);
+    broadcast(room);return;
+  }
   if(room.pendingEffect)return;
   if(!room.started || room.players[room.turn]?.id!==p.id) return;
   if(msg.type==='create') {
@@ -397,14 +409,14 @@ const server=http.createServer((req,res)=>{const u=new URL(req.url,'http://local
 const wss=new WebSocketServer({server});
 wss.on('connection',socket=>{let player=null,room=null;socket.on('message',raw=>{let m;try{m=JSON.parse(raw);}catch{return;}
   if(m.type==='createRoom'||m.type==='createSoloRoom'||m.type==='joinRoom'){const name=String(m.name||'玩家').trim().slice(0,16)||'玩家';const solo=m.type==='createSoloRoom';let r;
-    if(m.type==='createRoom'||solo){let c;do{c=code();}while(rooms.has(c));r={code:c,players:[],board:Array.from({length:9},()=>[]),bag:[],started:false,turn:0,active:null,hostId:null,log:[],winner:null,pendingEffect:null,effectQueue:[],effectSeen:new Set(),nextPieceId:1,lineEvents:[],nextLineEventId:1,eliminationEvent:null,nextEliminationEventId:1,botScheduled:false,botThinking:false,botPlan:null};rooms.set(c,r);}
+    if(m.type==='createRoom'||solo){let c;do{c=code();}while(rooms.has(c));r={code:c,players:[],board:Array.from({length:9},()=>[]),bag:[],started:false,turn:0,active:null,hostId:null,log:[],winner:null,pendingEffect:null,effectQueue:[],effectSeen:new Set(),nextPieceId:1,lineEvents:[],nextLineEventId:1,eliminationEvent:null,nextEliminationEventId:1,selectedChains:null,botScheduled:false,botThinking:false,botPlan:null};rooms.set(c,r);}
     else r=rooms.get(String(m.code||'').toUpperCase());
     if(!r){socket.send(JSON.stringify({type:'error',message:'找不到這個房間代碼。'}));return;}
     if(r.started||r.players.length>=4){socket.send(JSON.stringify({type:'error',message:'房間已開始或人數已滿。'}));return;}
     player={id:Math.random().toString(36).slice(2),name,color:colors[r.players.length],hand:[],connected:true,socket,isBot:false};room=r;r.players.push(player);if(!r.hostId)r.hostId=player.id;
     if(solo)r.players.push({id:`bot-${r.code}`,name:'AI 對手',color:'#7047a3',hand:[],connected:true,socket:null,isBot:true});
     note(r,`${name}加入房間。`);socket.send(JSON.stringify({type:'joined',id:player.id}));
-    if(solo){start(r);broadcast(r);}else broadcast(r);return;
+    broadcast(r);return;
   }
   if(room&&player)handle(room,player,m);
  });socket.on('close',()=>{if(room&&player){player.connected=false;note(room,`${player.name}離線。`);broadcast(room);}});});
