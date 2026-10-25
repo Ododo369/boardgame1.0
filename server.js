@@ -33,7 +33,20 @@ function publicState(room, viewerId) {
     selectedChains:room.selectedChains||null };
 }
 function note(room, text) { room.log.push(text); }
-function draw(room, player, n=1) { for(let i=0;i<n && room.bag.length;i++) player.hand.push(room.bag.pop()); }
+function draw(room, player, n=1) {
+  if(n>0&&room.bag.length<n){
+    let returned=0;const candidates=[];
+    for(let cell=0;cell<room.board.length;cell++){
+      const stack=room.board[cell];if(!stack.length)continue;
+      room.bag.push(stack.pop().animal);returned++;
+      const exposed=stack.at(-1);
+      if(exposed&&animals.find(a=>a.id===exposed.animal)?.trigger==='揭露')candidates.push({cell,pieceId:exposed.uid});
+    }
+    if(candidates.length)room.effectQueue.unshift({type:'reveal-group',candidates});
+    if(returned){shuffle(room.bag);note(room,`抽袋不足以抽取${n}枚，已將棋盤各格最上方棋子放回抽袋並重新洗勻。`);}
+  }
+  for(let i=0;i<n&&room.bag.length;i++)player.hand.push(room.bag.pop());
+}
 function drawOpeningHand(room, player) {
   const levelOne = room.bag.map((id,i)=>animals.find(a=>a.id===id)?.level===1?i:-1).filter(i=>i>=0);
   if (!levelOne.length) { draw(room,player,3); return; }
@@ -177,36 +190,54 @@ function advanceTurn(room, p) {
     room.turn=eliminated?currentIndex%room.players.length:(currentIndex+1)%room.players.length;
     draw(room,room.players[room.turn]);
     note(room,`${room.players[room.turn].name}的回合開始。`);
+    if(room.effectQueue.length)resolvePendingEffects(room,room.players[room.turn]);
   }
 }
 function finishAction(room, p) {
+  if(room.advanceAfterEffects){
+    if(!room.pendingEffect&&!room.effectQueue.length){
+      const actor=room.players.find(player=>player.id===room.advanceAfterEffects)||p;room.advanceAfterEffects=null;
+      resolveLines(room,actor);
+      if(room.pendingEffect||room.effectQueue.length){room.advanceAfterEffects=actor.id;if(!room.pendingEffect)resolvePendingEffects(room,actor);return;}
+      advanceTurn(room,actor);
+    }
+    return;
+  }
   if(room.active?.created && room.active?.moved){
     room.active=null;room.botPlan=null;
     resolveLines(room,p);
+    if(room.pendingEffect||room.effectQueue.length){room.advanceAfterEffects=p.id;if(!room.pendingEffect)resolvePendingEffects(room,p);return;}
     advanceTurn(room,p);
   }
 }
 function resolveLines(room, actor) {
   const lines=[[0,1,2],[3,4,5],[6,7,8],[0,3,6],[1,4,7],[2,5,8],[0,4,8],[2,4,6]];
-  for(const cells of lines){
-    const tops=cells.map(c=>room.board[c].at(-1)); if(!tops.every(Boolean)) continue;
-    const isChameleonLine=tops.every(t=>t.animal==='chameleon');
-    let chain=-1;
-    if(!isChameleonLine){
-      const species=tops.map(t=>animals.find(a=>a.id===t.animal));
-      if(species.some(a=>!a||a.chain>=3)||!species.every(a=>a.chain===species[0].chain)) continue;
-      const levels=species.map(a=>a.level).sort((a,b)=>a-b);
-      if(levels.join(',')!=='1,2,3') continue;
-      chain=species[0].chain;
+  let reward=false;
+  while(true){
+    const found=[];
+    for(const cells of lines){
+      const tops=cells.map(c=>room.board[c].at(-1));if(!tops.every(Boolean))continue;
+      const isChameleonLine=tops.every(t=>t.animal==='chameleon');let chain=-1;
+      if(!isChameleonLine){
+        const species=tops.map(t=>animals.find(a=>a.id===t.animal));
+        if(species.some(a=>!a||a.chain>=3)||!species.every(a=>a.chain===species[0].chain))continue;
+        if(species.map(a=>a.level).sort((a,b)=>a-b).join(',')!=='1,2,3')continue;
+        chain=species[0].chain;
+      }
+      found.push({cells,kind:isChameleonLine?'chameleon':'chain',chain});
     }
-    const returned=cells.map(c=>room.board[c].pop().animal);
-    room.bag.push(...returned);
-    const event={id:room.nextLineEventId++,cells:cells.slice(),kind:isChameleonLine?'chameleon':'chain'};
-    room.lineEvents.push(event);
-    setTimeout(()=>{room.lineEvents=room.lineEvents.filter(e=>e.id!==event.id);broadcast(room);},1500);
-    room.players.forEach(q=>{if(q!==actor)draw(room,q,1);});
-    note(room,isChameleonLine?'三枚變色龍連成一線，棋子回到抽袋。':`食物鏈${chain+1}以一、二、三級棋子連成一線，棋子回到抽袋。`);
+    if(!found.length)break;
+    const clearedCells=new Set(found.flatMap(line=>line.cells));
+    for(const cell of clearedCells){const piece=room.board[cell].pop();if(piece)room.bag.push(piece.animal);}
+    shuffle(room.bag);
+    for(const line of found){
+      const event={id:room.nextLineEventId++,cells:line.cells.slice(),kind:line.kind};room.lineEvents.push(event);
+      setTimeout(()=>{room.lineEvents=room.lineEvents.filter(e=>e.id!==event.id);broadcast(room);},1500);
+      note(room,line.kind==='chameleon'?'三枚變色龍連成一線，棋子回到抽袋。':`食物鏈${line.chain+1}以一、二、三級棋子連成一線，棋子回到抽袋。`);
+    }
+    reward=true;
   }
+  if(reward)room.players.forEach(q=>{if(q!==actor)draw(room,q,1);});
 }
 function handle(room,p,msg){
   if(msg.type==='effectMove'){
@@ -346,7 +377,7 @@ function handle(room,p,msg){
       note(room,species.id==='eagle'?`${p.name}先將老鷹移到相鄰格；接著可帶著落腳格中位於老鷹下方的一枚棋子飛往任意格。`:`${p.name}移動了${species.name}。`);resolvePendingEffects(room,p);
     } else room.board[msg.from].push(piece);
   }
-  if(msg.type==='skip' && !room.active){draw(room,p,1);note(room,`${p.name}無法完成行動，抽取1枚棋子並跳過。`);advanceTurn(room,p);}
+  if(msg.type==='skip' && !room.active){draw(room,p,1);note(room,`${p.name}無法完成行動，抽取1枚棋子並跳過。`);if(room.effectQueue.length){room.advanceAfterEffects=p.id;resolvePendingEffects(room,p);}else advanceTurn(room,p);}
   broadcast(room);
 }
 function scheduleBot(room,delay=520){
@@ -409,7 +440,7 @@ const server=http.createServer((req,res)=>{const u=new URL(req.url,'http://local
 const wss=new WebSocketServer({server});
 wss.on('connection',socket=>{let player=null,room=null;socket.on('message',raw=>{let m;try{m=JSON.parse(raw);}catch{return;}
   if(m.type==='createRoom'||m.type==='createSoloRoom'||m.type==='joinRoom'){const name=String(m.name||'玩家').trim().slice(0,16)||'玩家';const solo=m.type==='createSoloRoom';let r;
-    if(m.type==='createRoom'||solo){let c;do{c=code();}while(rooms.has(c));r={code:c,players:[],board:Array.from({length:9},()=>[]),bag:[],started:false,turn:0,active:null,hostId:null,log:[],winner:null,pendingEffect:null,effectQueue:[],effectSeen:new Set(),nextPieceId:1,lineEvents:[],nextLineEventId:1,eliminationEvent:null,nextEliminationEventId:1,selectedChains:null,botScheduled:false,botThinking:false,botPlan:null};rooms.set(c,r);}
+    if(m.type==='createRoom'||solo){let c;do{c=code();}while(rooms.has(c));r={code:c,players:[],board:Array.from({length:9},()=>[]),bag:[],started:false,turn:0,active:null,hostId:null,log:[],winner:null,pendingEffect:null,effectQueue:[],effectSeen:new Set(),nextPieceId:1,lineEvents:[],nextLineEventId:1,eliminationEvent:null,nextEliminationEventId:1,selectedChains:null,advanceAfterEffects:null,botScheduled:false,botThinking:false,botPlan:null};rooms.set(c,r);}
     else r=rooms.get(String(m.code||'').toUpperCase());
     if(!r){socket.send(JSON.stringify({type:'error',message:'找不到這個房間代碼。'}));return;}
     if(r.started||r.players.length>=4){socket.send(JSON.stringify({type:'error',message:'房間已開始或人數已滿。'}));return;}
