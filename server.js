@@ -43,7 +43,7 @@ function draw(room, player, n=1) {
       if(exposed&&animals.find(a=>a.id===exposed.animal)?.trigger==='揭露')candidates.push({cell,pieceId:exposed.uid});
     }
     if(candidates.length)room.effectQueue.unshift({type:'reveal-group',candidates});
-    if(returned){shuffle(room.bag);note(room,`抽袋不足以抽取${n}枚，已將棋盤各格最上方棋子放回抽袋並重新洗勻。`);}
+    if(returned){shuffle(room.bag);note(room,`冥界靈魂庫不足以分派${n}個靈魂，已將棋盤各格最上方動物的靈魂收回並重新洗勻。`);}
   }
   for(let i=0;i<n&&room.bag.length;i++)player.hand.push(room.bag.pop());
 }
@@ -57,7 +57,7 @@ function start(room) {
   if(!room.selectedChains){room.selectedChains=shuffle(Object.keys(chainNames).map(Number)).slice(0,3);}
   const animalTiles=animals.filter(a=>room.selectedChains.includes(a.chain)).flatMap(a=>Array(countsByLevel[a.level]).fill(a.id));
   room.started=true; room.bag=shuffle([...animalTiles,'chameleon','chameleon','chameleon']);
-  room.players.forEach(p=>drawOpeningHand(room,p)); room.turn=Math.floor(Math.random()*room.players.length); room.active=null; draw(room,room.players[room.turn]); note(room,`遊戲開始！每位玩家的起手牌至少有一枚等級一棋子。${room.players[room.turn].name}的回合開始。`);
+  room.players.forEach(p=>drawOpeningHand(room,p)); room.turn=Math.floor(Math.random()*room.players.length); room.active=null; draw(room,room.players[room.turn]); note(room,`轉生工作開始！每位職員起始至少負責一個一級靈魂。${room.players[room.turn].name}開始值勤。`);
 }
 function pieceLevel(piece) {
   return piece.level ?? animals.find(x=>x.id===piece.animal)?.level ?? 0;
@@ -103,14 +103,14 @@ function resolvePendingEffects(room, actor) {
       if(!exposed||exposed.uid!==task.pieceId||room.effectSeen.has(task.pieceId))continue;
       room.effectSeen.add(task.pieceId);
       const revealedSpecies=animals.find(a=>a.id===exposed.animal);
-      note(room,task.reason==='create'?`第${task.cell+1}格創造的${revealedSpecies?.name||'棋子'}觸發揭露效果。`:`第${task.cell+1}格的${revealedSpecies?.name||'棋子'}被揭露。`);
+      note(room,task.reason==='create'?`第${task.cell+1}格安排出生的${revealedSpecies?.name||'動物'}觸發揭露效果。`:`第${task.cell+1}格的${revealedSpecies?.name||'棋子'}被揭露。`);
       if(exposed.animal==='rabbit'){
         room.pendingEffect={type:'rabbit-move',playerId:actor.id,pieceId:exposed.uid,from:task.cell,targets:adjacentCells(task.cell)};
         return;
       }
       if(exposed.animal==='fox'){
         const count=Math.min(2,room.bag.length);
-        if(count){draw(room,actor,count);room.pendingEffect={type:'fox-return',playerId:actor.id,pieceId:exposed.uid,count};note(room,'赤狐觸發揭露效果，抽取棋子並選擇放回抽袋。');return;}
+        if(count){draw(room,actor,count);room.pendingEffect={type:'fox-return',playerId:actor.id,pieceId:exposed.uid,count};note(room,'赤狐觸發揭露效果，接收靈魂並選擇交回冥界。');return;}
       }
       if(exposed.animal==='seal'){
         const drawn=[];
@@ -123,7 +123,7 @@ function resolvePendingEffects(room, actor) {
       }
       if(exposed.animal==='python'){
         const targets=adjacentCells(task.cell).filter(cell=>room.board[cell].length);
-        if(targets.length){room.pendingEffect={type:'python-collect',playerId:actor.id,pieceId:exposed.uid,targets};note(room,'蟒蛇觸發揭露效果，選擇一個相鄰格收取最上方棋子。');return;}
+        if(targets.length){room.pendingEffect={type:'python-collect',playerId:actor.id,pieceId:exposed.uid,targets};note(room,'蟒蛇觸發揭露效果，選擇一個相鄰格收取最上方動物。');return;}
       }
       // Other reveal effects are handled by their effect-specific resolvers as they are implemented.
       continue;
@@ -179,17 +179,17 @@ function advanceTurn(room, p) {
   const currentIndex=room.players.findIndex(q=>q.id===p.id);
   const eliminated=p.hand.length>=6;
   if(eliminated){
-    note(room,`${p.name}回合結束時手牌達${p.hand.length}枚（至少6枚），遭淘汰，手牌放回抽袋。`);
+    note(room,`${p.name}回合結束時負責的靈魂達${p.hand.length}個（至少6個），遭上頭解聘；靈魂交回冥界，由下一任職員接手。`);
     room.eliminationEvent={id:room.nextEliminationEventId++,playerName:p.name,handCount:p.hand.length};
     if(p.socket?.readyState===1)p.socket.send(JSON.stringify({type:'eliminated',event:room.eliminationEvent}));
     room.bag.push(...p.hand);p.hand=[];shuffle(room.bag);
     room.players.splice(currentIndex,1);
   }
-  if(room.players.length===1){room.winner=room.players[0].name;note(room,`${room.winner}獲勝！`);return;}
+  if(room.players.length===1){room.winner=room.players[0].name;note(room,`${room.winner}成為最後留任的轉生職員，獲得勝利！`);return;}
   if(room.players.length){
     room.turn=eliminated?currentIndex%room.players.length:(currentIndex+1)%room.players.length;
     draw(room,room.players[room.turn]);
-    note(room,`${room.players[room.turn].name}的回合開始。`);
+    note(room,`${room.players[room.turn].name}開始值勤。`);
     if(room.effectQueue.length)resolvePendingEffects(room,room.players[room.turn]);
   }
 }
@@ -233,11 +233,11 @@ function resolveLines(room, actor) {
     for(const line of found){
       const event={id:room.nextLineEventId++,cells:line.cells.slice(),kind:line.kind};room.lineEvents.push(event);
       setTimeout(()=>{room.lineEvents=room.lineEvents.filter(e=>e.id!==event.id);broadcast(room);},1500);
-      note(room,line.kind==='chameleon'?'三枚變色龍連成一線，棋子回到抽袋。':`食物鏈${line.chain+1}以一、二、三級棋子連成一線，棋子回到抽袋。`);
+      note(room,line.kind==='chameleon'?'三隻變色龍維持平衡，靈魂自然回歸冥界。':`食物鏈${line.chain+1}完成平衡，動物靈魂自然回歸冥界。`);
     }
     reward=true;
   }
-  if(reward)room.players.forEach(q=>{if(q!==actor)draw(room,q,1);});
+  if(reward){note(room,`${actor.name}完成生態平衡，獲得一天假期；其他職員各接收一個新靈魂。`);room.players.forEach(q=>{if(q!==actor)draw(room,q,1);});}
 }
 function handle(room,p,msg){
   if(msg.type==='effectMove'){
@@ -250,7 +250,7 @@ function handle(room,p,msg){
       const piece={uid:room.nextPieceId++,animal:'krill',level:1,owner:p.id};
       room.board[msg.to].push(piece);room.pendingEffect=null;
       room.active??={created:false,moved:true};room.active.moved=true;
-      note(room,`${p.name}觸發磷蝦效果，將一枚磷蝦放到空格。`);
+      note(room,`${p.name}觸發磷蝦效果，安排一隻磷蝦在空格出生。`);
       resolvePendingEffects(room,p);broadcast(room);return;
     }
     if(pending.type==='reveal-choice'){
@@ -282,7 +282,7 @@ function handle(room,p,msg){
       const stack=room.board[msg.to],taken=stack.at(-1);
       if(!taken)return;
       stack.pop();p.hand.push(taken.animal);room.pendingEffect=null;
-      note(room,`${p.name}觸發虎鯨效果，將一枚最上方棋子拿到手中。`);
+      note(room,`${p.name}觸發虎鯨效果，將一隻最上方動物的靈魂收回手中。`);
       queueReveal(room,msg.to,true);
       resolvePendingEffects(room,p);broadcast(room);return;
     }
@@ -293,7 +293,7 @@ function handle(room,p,msg){
       source.pop();const stack=room.board[python.cell],currentPython=stack.findIndex(piece=>piece.uid===pending.pieceId);
       stack.splice(currentPython,0,moved);
       room.pendingEffect=null;
-      note(room,'蟒蛇將所選相鄰格最上方的一枚棋子收至自身下方。');
+      note(room,'蟒蛇將所選相鄰格最上方的一隻動物收至自身下方。');
       queueReveal(room,msg.to,true);
       resolvePendingEffects(room,p);broadcast(room);return;
     }
@@ -358,12 +358,12 @@ function handle(room,p,msg){
   if(room.pendingEffect)return;
   if(!room.started || room.players[room.turn]?.id!==p.id) return;
   if(msg.type==='create') {
-    if(room.active?.created){note(room,'本回合已創造動物，不能再創造。');}
-    else if(!p.hand.includes(msg.animal)){note(room,'無法創造：該棋子不在你的手牌中。');}
-    else if(!canCreate(room,msg.animal,msg.cell)){note(room,'無法創造：所選格不符合放置規則。');}
+    if(room.active?.created){note(room,'本回合已安排動物出生，不能再安排。');}
+    else if(!p.hand.includes(msg.animal)){note(room,'無法安排出生：你目前沒有這個動物的靈魂。');}
+    else if(!canCreate(room,msg.animal,msg.cell)){note(room,'無法安排出生：所選格不符合等級規則。');}
     else {
       p.hand.splice(p.hand.indexOf(msg.animal),1); const piece={uid:room.nextPieceId++,animal:msg.animal,...(msg.animal==='chameleon'?{}:{level:animals.find(a=>a.id===msg.animal).level}),owner:p.id}; room.board[msg.cell].push(piece); room.active??={created:false,moved:false};room.active.created=true;
-      room.effectQueue=[];room.effectSeen=new Set();queueReveal(room,msg.cell,false,'create');note(room,`${p.name}創造了${animals.find(a=>a.id===msg.animal).name}。`);resolvePendingEffects(room,p);
+      room.effectQueue=[];room.effectSeen=new Set();queueReveal(room,msg.cell,false,'create');note(room,`${p.name}安排${animals.find(a=>a.id===msg.animal).name}誕生。`);resolvePendingEffects(room,p);
     }
   }
   if(msg.type==='move' && !room.active?.moved && Number.isInteger(msg.from) && Number.isInteger(msg.to) && msg.from>=0 && msg.from<9 && msg.to>=0 && msg.to<9 && Math.abs(msg.from%3-msg.to%3)+Math.abs(Math.floor(msg.from/3)-Math.floor(msg.to/3))===1 && room.board[msg.from].length){
@@ -377,7 +377,7 @@ function handle(room,p,msg){
       note(room,species.id==='eagle'?`${p.name}先將老鷹移到相鄰格；接著可帶著落腳格中位於老鷹下方的一枚棋子飛往任意格。`:`${p.name}移動了${species.name}。`);resolvePendingEffects(room,p);
     } else room.board[msg.from].push(piece);
   }
-  if(msg.type==='skip' && !room.active){draw(room,p,1);note(room,`${p.name}無法完成行動，抽取1枚棋子並跳過。`);if(room.effectQueue.length){room.advanceAfterEffects=p.id;resolvePendingEffects(room,p);}else advanceTurn(room,p);}
+  if(msg.type==='skip' && !room.active){draw(room,p,1);note(room,`${p.name}無法完成本回合行動，接收1個靈魂並跳過。`);if(room.effectQueue.length){room.advanceAfterEffects=p.id;resolvePendingEffects(room,p);}else advanceTurn(room,p);}
   broadcast(room);
 }
 function scheduleBot(room,delay=520){
@@ -439,16 +439,16 @@ function runBotStep(room,bot){
 const server=http.createServer((req,res)=>{const u=new URL(req.url,'http://localhost');let file=u.pathname==='/'?'index.html':u.pathname.slice(1);if(file.includes('..')){res.writeHead(400).end();return;}const target=path.join(__dirname,file);fs.readFile(target,(err,data)=>{if(err){res.writeHead(404).end('Not found');return;}res.setHeader('Content-Type',target.endsWith('.js')?'text/javascript; charset=utf-8':target.endsWith('.css')?'text/css; charset=utf-8':'text/html; charset=utf-8');res.end(data);});});
 const wss=new WebSocketServer({server});
 wss.on('connection',socket=>{let player=null,room=null;socket.on('message',raw=>{let m;try{m=JSON.parse(raw);}catch{return;}
-  if(m.type==='createRoom'||m.type==='createSoloRoom'||m.type==='joinRoom'){const name=String(m.name||'玩家').trim().slice(0,16)||'玩家';const solo=m.type==='createSoloRoom';let r;
+  if(m.type==='createRoom'||m.type==='createSoloRoom'||m.type==='joinRoom'){const name=String(m.name||'職員').trim().slice(0,16)||'職員';const solo=m.type==='createSoloRoom';let r;
     if(m.type==='createRoom'||solo){let c;do{c=code();}while(rooms.has(c));r={code:c,players:[],board:Array.from({length:9},()=>[]),bag:[],started:false,turn:0,active:null,hostId:null,log:[],winner:null,pendingEffect:null,effectQueue:[],effectSeen:new Set(),nextPieceId:1,lineEvents:[],nextLineEventId:1,eliminationEvent:null,nextEliminationEventId:1,selectedChains:null,advanceAfterEffects:null,botScheduled:false,botThinking:false,botPlan:null};rooms.set(c,r);}
     else r=rooms.get(String(m.code||'').toUpperCase());
     if(!r){socket.send(JSON.stringify({type:'error',message:'找不到這個房間代碼。'}));return;}
     if(r.started||r.players.length>=4){socket.send(JSON.stringify({type:'error',message:'房間已開始或人數已滿。'}));return;}
     player={id:Math.random().toString(36).slice(2),name,color:colors[r.players.length],hand:[],connected:true,socket,isBot:false};room=r;r.players.push(player);if(!r.hostId)r.hostId=player.id;
-    if(solo)r.players.push({id:`bot-${r.code}`,name:'AI 對手',color:'#7047a3',hand:[],connected:true,socket:null,isBot:true});
-    note(r,`${name}加入房間。`);socket.send(JSON.stringify({type:'joined',id:player.id}));
+    if(solo)r.players.push({id:`bot-${r.code}`,name:'AI 同事',color:'#7047a3',hand:[],connected:true,socket:null,isBot:true});
+    note(r,`${name}加入轉生部門值勤。`);socket.send(JSON.stringify({type:'joined',id:player.id}));
     broadcast(r);return;
   }
   if(room&&player)handle(room,player,m);
- });socket.on('close',()=>{if(room&&player){player.connected=false;note(room,`${player.name}離線。`);broadcast(room);}});});
+ });socket.on('close',()=>{if(room&&player){player.connected=false;note(room,`${player.name}暫時離開值勤。`);broadcast(room);}});});
 server.listen(PORT,'0.0.0.0',()=>console.log(`Abstract Tabletop is listening on ${PORT}`));
