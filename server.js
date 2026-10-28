@@ -18,7 +18,7 @@ const animals = [
   { id: 'orca', name: '虎鯨', chain: 2, level: 3, trigger: '揭露', effect: '被創造或揭露時，將自身以外場上1枚最上方棋子拿到手中' },
   { id: 'chameleon', name: '變色龍', chain: 3, level: 0, trigger: '無', effect: '可視為任意等級；沒有移動或揭露觸發效果' },
 ];
-const chainNames = { 0:'食物鏈一', 1:'食物鏈二', 2:'食物鏈三' };
+const chainNames = { 0:'食物鏈 A', 1:'食物鏈 B', 2:'食物鏈 C' };
 const colors = ['#eb785d', '#4c9b8a', '#6384d8', '#d69a3d'];
 const code = () => Math.random().toString(36).slice(2, 6).toUpperCase();
 const shuffle = a => { for (let i=a.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[a[i],a[j]]=[a[j],a[i]];} return a; };
@@ -233,7 +233,7 @@ function resolveLines(room, actor) {
     for(const line of found){
       const event={id:room.nextLineEventId++,cells:line.cells.slice(),kind:line.kind};room.lineEvents.push(event);
       setTimeout(()=>{room.lineEvents=room.lineEvents.filter(e=>e.id!==event.id);broadcast(room);},1500);
-      note(room,line.kind==='chameleon'?'三隻變色龍維持平衡，靈魂自然回歸冥界。':`食物鏈${line.chain+1}完成平衡，動物靈魂自然回歸冥界。`);
+      note(room,line.kind==='chameleon'?'三隻變色龍維持平衡，靈魂自然回歸冥界。':`${chainNames[line.chain]}完成平衡，動物靈魂自然回歸冥界。`);
     }
     reward=true;
   }
