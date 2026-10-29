@@ -192,10 +192,8 @@ function choosePendingAction(board,hand,pending,botId) {
   if(pending.type==='eagle-flight'){
     const eagle=locate(board,pending.pieceId);if(!eagle)return null;
     const to=chooseTarget(board,targets,(next,dest)=>{
-      const bird=locate(next,pending.pieceId);if(!bird)return false;
-      let cargo=null;if(pending.cargoId){const carried=locate(next,pending.cargoId);if(carried){cargo=next[carried.cell].splice(carried.index,1)[0];}}
-      const refreshed=locate(next,pending.pieceId);if(!refreshed)return false;
-      const [piece]=next[refreshed.cell].splice(refreshed.index,1);next[dest].push(...(cargo?[cargo]:[]),piece);return true;
+      const bird=locate(next,pending.pieceId);if(!bird||!next[dest]?.length||next[dest].at(-1).uid===pending.pieceId)return false;
+      const [piece]=next[bird.cell].splice(bird.index,1);next[dest].push(piece);return true;
     });
     return to===null?null:{type:'effectMove',to};
   }

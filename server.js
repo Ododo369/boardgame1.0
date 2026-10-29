@@ -12,7 +12,7 @@ const animals = [
   { id: 'python', name: '蟒蛇', chain: 0, level: 3, trigger: '揭露', effect: '選擇一個相鄰格，將該格最上方棋子收至自身下方' },
   { id: 'rabbit', name: '兔子', chain: 1, level: 1, trigger: '揭露', effect: '自身移動一次' },
   { id: 'fox', name: '赤狐', chain: 1, level: 2, trigger: '揭露', effect: '抽2枚棋子，再放回2枚' },
-  { id: 'eagle', name: '老鷹', chain: 1, level: 3, trigger: '移動', effect: '先移動到相鄰格；移動後將自身與落腳格中位於自身下方的一枚棋子作為一組放到任意格最上方，順序不變；被帶棋子不觸發移動或揭露效果' },
+  { id: 'eagle', name: '老鷹', chain: 1, level: 3, trigger: '移動後', effect: '將老鷹放到場上任意一隻最上方動物上方；不能放到空格，也不帶動其他棋子' },
   { id: 'krill', name: '磷蝦', chain: 2, level: 1, trigger: '移動', effect: '將手中的磷蝦放到空格' },
   { id: 'seal', name: '海豹', chain: 2, level: 2, trigger: '揭露', effect: '抽2枚，選1枚放在自身下方' },
   { id: 'orca', name: '虎鯨', chain: 2, level: 3, trigger: '揭露', effect: '被創造或揭露時，將自身以外場上1枚最上方棋子拿到手中' },
@@ -167,9 +167,8 @@ function resolvePendingEffects(room, actor) {
           return;
         }
       } else if(found&&found.piece.animal==='eagle'&&found.cell===task.target){
-        const stack=room.board[found.cell],cargo=stack[found.index-1];
-        room.pendingEffect={type:'eagle-flight',playerId:actor.id,pieceId:found.piece.uid,cargoId:cargo?.uid??null,from:found.cell,targets:room.board.map((_,i)=>i)};
-        return;
+        const targets=room.board.map((stack,i)=>stack.length&&stack.at(-1).uid!==found.piece.uid?i:-1).filter(i=>i>=0);
+        if(targets.length){room.pendingEffect={type:'eagle-flight',playerId:actor.id,pieceId:found.piece.uid,from:found.cell,targets};return;}
       }
     }
   }
@@ -264,16 +263,13 @@ function handle(room,p,msg){
     if(pending.type==='eagle-flight'){
       const eagle=findPiece(room,pending.pieceId),source=eagle&&room.board[eagle.cell];
       if(!eagle||eagle.piece.animal!=='eagle'||!source)return;
+      const destination=room.board[msg.to];
+      if(!destination?.length||destination.at(-1)?.uid===pending.pieceId)return;
       const previousTop=source.at(-1)?.uid;
-      let cargo=null;
-      if(pending.cargoId){
-        if(source[eagle.index-1]?.uid!==pending.cargoId)return;
-        [cargo]=source.splice(eagle.index-1,1);
-      }
       const refreshed=findPiece(room,pending.pieceId),[bird]=room.board[refreshed.cell].splice(refreshed.index,1);
-      room.board[msg.to].push(...(cargo?[cargo]:[]),bird);
+      destination.push(bird);
       room.pendingEffect=null;
-      note(room,`${p.name}觸發老鷹效果，飛到第${msg.to+1}格。`);
+      note(room,`${p.name}觸發老鷹效果，將老鷹放到第${msg.to+1}格最上方動物之上。`);
       const top=room.board[refreshed.cell].at(-1);
       if(top&&top.uid!==previousTop)queueReveal(room,refreshed.cell,true);
       resolvePendingEffects(room,p);broadcast(room);return;
@@ -373,8 +369,8 @@ function handle(room,p,msg){
       room.active??={created:false,moved:false};room.active.moved=true;
       room.effectQueue=[];room.effectSeen=new Set();
       queueReveal(room,msg.from);
-      if(species.trigger==='移動')room.effectQueue.push({type:'after-move',pieceId:piece.uid,target:msg.to});
-      note(room,species.id==='eagle'?`${p.name}先將老鷹移到相鄰格；接著可帶著落腳格中位於老鷹下方的一枚棋子飛往任意格。`:`${p.name}移動了${species.name}。`);resolvePendingEffects(room,p);
+      if(species.trigger==='移動'||species.trigger==='移動後')room.effectQueue.push({type:'after-move',pieceId:piece.uid,target:msg.to});
+      note(room,species.id==='eagle'?`${p.name}將老鷹移到相鄰格；移動後可將老鷹放到場上任意一隻最上方動物上方。`:`${p.name}移動了${species.name}。`);resolvePendingEffects(room,p);
     } else room.board[msg.from].push(piece);
   }
   if(msg.type==='skip' && !room.active){draw(room,p,1);note(room,`${p.name}無法完成本回合行動，接收1個靈魂並跳過。`);if(room.effectQueue.length){room.advanceAfterEffects=p.id;resolvePendingEffects(room,p);}else advanceTurn(room,p);}
