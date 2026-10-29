@@ -70,6 +70,22 @@ function positionScore(board) {
     }
     const chameleons=tops.filter(piece=>piece?.animal==='chameleon').length;
     if(chameleons===1)score+=0.8;if(chameleons===2)score+=9;if(chameleons===3)score+=18;
+
+    // Pieces directly beneath each top animal are the next likely animals to
+    // become visible. Give them a smaller, separate value so the AI considers
+    // stack depth without treating buried pieces as an already completed line.
+    for(let depth=2;depth<=3;depth++){
+      const layer=cells.map(cell=>board[cell].at(-depth));
+      for(let chain=0;chain<4;chain++){
+        const levels=layer.filter(piece=>piece&&SPECIES[piece.animal]?.chain===chain).map(piece=>SPECIES[piece.animal].level);
+        const distinct=new Set(levels).size;
+        if(levels.length===1)score+=0.18/(depth-1);
+        if(levels.length===2)score+=(distinct===2?1.8:0.55)/(depth-1);
+      }
+      const buriedChameleons=layer.filter(piece=>piece?.animal==='chameleon').length;
+      if(buriedChameleons===1)score+=0.18/(depth-1);
+      if(buriedChameleons===2)score+=1.8/(depth-1);
+    }
   }
   return score;
 }
@@ -96,7 +112,9 @@ function generateTurns(board,allowed,owner,limit=Infinity) {
 }
 function bestResponseScore(board) {
   const replies=generateTurns(board,ANIMAL_IDS,'human',1);
-  return replies.length?replies[0].wins*170+replies[0].position:0;
+  if(!replies.length)return 0;
+  // A direct winning reply matters far more than any positional advantage.
+  return replies[0].wins?100000+replies[0].wins*1000:replies[0].position;
 }
 function chooseTurnPlan(board,hand,owner) {
   // Orca's reveal effect takes one additional piece into the AI's hand.
@@ -109,7 +127,10 @@ function chooseTurnPlan(board,hand,owner) {
   for(const option of options){
     const after=cloneBoard(option.board);clearLines(after);
     const threat=bestResponseScore(after);
-    const score=option.wins*220+option.position*0.55-threat*0.72+positionScore(after)*0.18;
+    // Priority order: make a line now, prevent an immediate human line, then
+    // improve the board position. The wide gaps keep positional points from
+    // ever outweighing either tactical objective.
+    const score=option.wins*1000000-threat*10+option.position*4+positionScore(after);
     if(score>bestScore){bestScore=score;best={create:option.create,move:option.move,order:option.order,score};}
   }
   return best;
@@ -119,7 +140,7 @@ function chooseMove(board,owner) {
   for(const action of moves(board)){
     const next=cloneBoard(board);move(next,action);const wins=completedLines(next).length;
     const cleared=cloneBoard(next);clearLines(cleared);
-    const score=wins*220+positionScore(next)*0.55-bestResponseScore(cleared)*0.72;
+    const score=wins*1000000-bestResponseScore(cleared)*10+positionScore(next)*4;
     if(score>bestScore){bestScore=score;best=action;}
   }
   return best;
@@ -130,7 +151,7 @@ function locate(board,uid) {
 }
 function strategicValue(board) {
   const wins=completedLines(board).length,cleared=cloneBoard(board);clearLines(cleared);
-  return wins*180+positionScore(board)*0.45-bestResponseScore(cleared)*0.55;
+  return wins*1000000-bestResponseScore(cleared)*10+positionScore(board)*4;
 }
 function chooseTarget(board,targets,simulate) {
   let best=null,bestScore=-Infinity;

@@ -182,7 +182,9 @@ function resolvePendingEffects(room, actor) {
         const player=room.players.find(q=>q.id===actor.id);
         if(player?.hand.length){room.pendingEffect={type:'grasshopper-swap',playerId:actor.id,pieceId:found.piece.uid,targets:[]};note(room,'蚱蜢觸發移動後能力，正在選擇要交換的手中靈魂。');return;}
       } else if(found&&found.piece.animal==='crocodile'&&found.cell===task.target){
-        const lines=boardLines.filter(line=>line.includes(found.cell)&&line.some(cell=>cell!==found.cell&&room.board[cell].length));
+        // Crocodile may choose any of the four lines passing through its cell,
+        // including a line with no other animals on it.
+        const lines=boardLines.filter(line=>line.includes(found.cell));
         if(lines.length){room.pendingEffect={type:'crocodile-line',playerId:actor.id,pieceId:found.piece.uid,targets:[],lines};note(room,'鱷魚觸發移動後能力，正在選擇要清理的直線。');return;}
       }
     }
