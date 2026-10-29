@@ -14,7 +14,7 @@ const animals = [
   { id: 'fox', name: '赤狐', chain: 1, level: 2, trigger: '揭露', effect: '抽2枚棋子，再放回2枚' },
   { id: 'eagle', name: '老鷹', chain: 1, level: 3, trigger: '移動後', effect: '將老鷹放到場上任意一隻最上方動物上方；不能放到空格，也不帶動其他棋子' },
   { id: 'krill', name: '磷蝦', chain: 2, level: 1, trigger: '移動', effect: '將手中的磷蝦放到空格' },
-  { id: 'seal', name: '海豹', chain: 2, level: 2, trigger: '揭露', effect: '抽2枚，選1枚放在自身下方' },
+  { id: 'seal', name: '海豹', chain: 2, level: 2, trigger: '揭露', effect: '抽1個靈魂加入手中，再從手中選1個放到自身下方' },
   { id: 'orca', name: '虎鯨', chain: 2, level: 3, trigger: '揭露', effect: '被創造或揭露時，將自身以外場上1枚最上方棋子拿到手中' },
   { id: 'chameleon', name: '變色龍', chain: 3, level: 0, trigger: '無', effect: '可視為任意等級；沒有移動或揭露觸發效果' },
 ];
@@ -27,7 +27,7 @@ function publicState(room, viewerId) {
   return { code:room.code, started:room.started, hostId:room.hostId, turn:room.turn, active:room.active,
     players:room.players.map(({id,name,hand,color,connected,isBot})=>({id,name,hand:id===viewerId?hand:[],handCount:hand.length,color,connected,isBot:!!isBot})),
     board:room.board, bagCount:room.bag.length, log:room.log.slice(-8), winner:room.winner,
-    pendingEffect:room.pendingEffect?{type:room.pendingEffect.type,playerId:room.pendingEffect.playerId,pieceId:room.pendingEffect.pieceId,from:room.pendingEffect.from,targets:room.pendingEffect.targets,...(room.pendingEffect.type==='fox-return'&&room.pendingEffect.playerId===viewerId?{count:room.pendingEffect.count}:{}),...(room.pendingEffect.type==='seal-select'&&room.pendingEffect.playerId===viewerId?{drawn:room.pendingEffect.drawn}:{})}:null,
+    pendingEffect:room.pendingEffect?{type:room.pendingEffect.type,playerId:room.pendingEffect.playerId,pieceId:room.pendingEffect.pieceId,from:room.pendingEffect.from,targets:room.pendingEffect.targets,...(room.pendingEffect.type==='fox-return'&&room.pendingEffect.playerId===viewerId?{count:room.pendingEffect.count}:{})}:null,
     lineEvents:room.lineEvents||[], eliminationEvent:room.eliminationEvent||null,
     chainOptions:Object.entries(chainNames).map(([id,name])=>({id:Number(id),name,animals:animals.filter(a=>a.chain===Number(id)).map(a=>({id:a.id,name:a.name,level:a.level,count:a.level===1?7:a.level===2?4:2}))})),
     selectedChains:room.selectedChains||null };
@@ -113,9 +113,10 @@ function resolvePendingEffects(room, actor) {
         if(count){draw(room,actor,count);room.pendingEffect={type:'fox-return',playerId:actor.id,pieceId:exposed.uid,count};note(room,'赤狐觸發揭露效果，接收靈魂並選擇交回冥界。');return;}
       }
       if(exposed.animal==='seal'){
-        const drawn=[];
-        for(let i=0;i<2&&room.bag.length;i++)drawn.push(room.bag.pop());
-        if(drawn.length){room.pendingEffect={type:'seal-select',playerId:actor.id,pieceId:exposed.uid,drawn};note(room,`${actor.name}觸發海豹揭露效果，正在選擇要私藏的動物。`);return;}
+        const handSize=actor.hand.length;
+        draw(room,actor,1);
+        if(actor.hand.length>handSize){room.pendingEffect={type:'seal-select',playerId:actor.id,pieceId:exposed.uid,targets:[]};note(room,`${actor.name}觸發海豹揭露效果，抽取1個靈魂後，正在從手中選擇要放到海豹下方的動物。`);return;}
+        note(room,'海豹觸發揭露效果，但靈魂庫無法抽取靈魂，能力未執行。');
       }
       if(exposed.animal==='orca'){
         const targets=room.board.map((stack,i)=>stack.length&&stack.at(-1).uid!==exposed.uid?i:-1).filter(i=>i>=0);
@@ -331,11 +332,11 @@ function handle(room,p,msg){
   }
   if(msg.type==='sealChoose'){
     const pending=room.pendingEffect;
-    if(!pending||pending.type!=='seal-select'||pending.playerId!==p.id||!Number.isInteger(msg.choice)||msg.choice<0||msg.choice>=pending.drawn.length)return;
-    const seal=findPiece(room,pending.pieceId);if(!seal){room.bag.push(...pending.drawn);shuffle(room.bag);room.pendingEffect=null;resolvePendingEffects(room,p);broadcast(room);return;}
-    const chosen=pending.drawn[msg.choice],returned=pending.drawn.filter((_,i)=>i!==msg.choice);
+    if(!pending||pending.type!=='seal-select'||pending.playerId!==p.id||!Number.isInteger(msg.handIndex)||msg.handIndex<0||msg.handIndex>=p.hand.length)return;
+    const seal=findPiece(room,pending.pieceId);if(!seal){room.pendingEffect=null;resolvePendingEffects(room,p);broadcast(room);return;}
+    const [chosen]=p.hand.splice(msg.handIndex,1);
     const species=animals.find(a=>a.id===chosen),piece={uid:room.nextPieceId++,animal:chosen,...(species.level===0?{}:{level:species.level}),owner:p.id};
-    room.board[seal.cell].splice(seal.index,0,piece);room.bag.push(...returned);shuffle(room.bag);room.pendingEffect=null;
+    room.board[seal.cell].splice(seal.index,0,piece);room.pendingEffect=null;
     note(room,`${p.name}完成海豹效果。`);
     resolvePendingEffects(room,p);broadcast(room);return;
   }
@@ -395,7 +396,7 @@ function runBotStep(room,bot){
       if(!action){
         const pending=room.pendingEffect;
         if(pending.type==='fox-return')action={type:'foxReturn',animals:bot.hand.slice(0,pending.count)};
-        else if(pending.type==='seal-select')action={type:'sealChoose',choice:0};
+        else if(pending.type==='seal-select')action={type:'sealChoose',handIndex:0};
         else if(pending.targets?.length)action={type:'effectMove',to:pending.targets[0]};
       }
       if(action)handle(room,bot,action);

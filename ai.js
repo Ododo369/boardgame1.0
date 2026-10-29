@@ -151,12 +151,9 @@ function choosePendingAction(board,hand,pending,botId) {
     return{type:'foxReturn',animals:hand.map((animal,index)=>({animal,index,value:cardValue(animal,board,hand)})).sort((a,b)=>a.value-b.value).slice(0,count).map(item=>item.animal)};
   }
   if(pending.type==='seal-select'){
-    const seal=locate(board,pending.pieceId);if(!seal)return{type:'sealChoose',choice:0};
-    const scored=(pending.drawn||[]).map((animal,choice)=>{
-      const next=cloneBoard(board),species=SPECIES[animal];next[seal.cell].splice(seal.index,0,{uid:`seal-sim-${choice}`,animal,level:species?.level||undefined,owner:botId});
-      return{choice,score:strategicValue(next)};
-    }).sort((a,b)=>b.score-a.score);
-    return{type:'sealChoose',choice:scored[0]?.choice??0};
+    const seal=locate(board,pending.pieceId);if(!seal)return{type:'sealChoose',handIndex:0};
+    const scored=hand.map((animal,handIndex)=>({animal,handIndex,value:cardValue(animal,board,hand)})).sort((a,b)=>a.value-b.value);
+    return{type:'sealChoose',handIndex:scored[0]?.handIndex??0};
   }
   if(pending.type==='reveal-choice'){
     const candidates=pending.candidates||[];let best=null,bestScore=-Infinity;
