@@ -6,6 +6,7 @@ const { chooseTurnPlan, chooseMove, choosePendingAction } = require('./ai');
 
 const PORT = process.env.PORT || 3000;
 const rooms = new Map();
+const boardLines = [[0,1,2],[3,4,5],[6,7,8],[0,3,6],[1,4,7],[2,5,8],[0,4,8],[2,4,6]];
 const animals = [
   { id: 'mole', name: '地鼠', chain: 0, level: 1, trigger: '移動', effect: '移至該格堆疊最底部' },
   { id: 'weasel', name: '黃鼬', chain: 0, level: 2, trigger: '移動', effect: '移動自己以外的一枚棋子' },
@@ -16,9 +17,12 @@ const animals = [
   { id: 'krill', name: '磷蝦', chain: 2, level: 1, trigger: '移動', effect: '將手中的磷蝦放到空格' },
   { id: 'seal', name: '海豹', chain: 2, level: 2, trigger: '揭露', effect: '抽1個靈魂加入手中，再從手中選1個放到自身下方' },
   { id: 'orca', name: '虎鯨', chain: 2, level: 3, trigger: '揭露', effect: '被創造或揭露時，將自身以外場上1枚最上方棋子拿到手中' },
-  { id: 'chameleon', name: '變色龍', chain: 3, level: 0, trigger: '無', effect: '可視為任意等級；沒有移動或揭露觸發效果' },
+  { id: 'grasshopper', name: '蚱蜢', chain: 3, level: 1, trigger: '移動後', effect: '將自身與手中1個靈魂交換；手中沒有靈魂時不觸發' },
+  { id: 'treefrog', name: '樹蛙', chain: 3, level: 2, trigger: '揭露', effect: '將自身與相鄰格1隻最上方動物交換' },
+  { id: 'crocodile', name: '鱷魚', chain: 3, level: 3, trigger: '移動後', effect: '選擇經過自身的橫、直或斜線，將線上自身以外最上方動物放回靈魂庫' },
+  { id: 'chameleon', name: '變色龍', chain: 4, level: 0, trigger: '無', effect: '可視為任意等級；沒有移動或揭露觸發效果' },
 ];
-const chainNames = { 0:'食物鏈 A', 1:'食物鏈 B', 2:'食物鏈 C' };
+const chainNames = { 0:'食物鏈 A', 1:'食物鏈 B', 2:'食物鏈 C', 3:'食物鏈 D' };
 const colors = ['#eb785d', '#4c9b8a', '#6384d8', '#d69a3d'];
 const code = () => Math.random().toString(36).slice(2, 6).toUpperCase();
 const shuffle = a => { for (let i=a.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[a[i],a[j]]=[a[j],a[i]];} return a; };
@@ -27,7 +31,7 @@ function publicState(room, viewerId) {
   return { code:room.code, started:room.started, hostId:room.hostId, turn:room.turn, active:room.active,
     players:room.players.map(({id,name,hand,color,connected,isBot})=>({id,name,hand:id===viewerId?hand:[],handCount:hand.length,color,connected,isBot:!!isBot})),
     board:room.board, bagCount:room.bag.length, log:room.log.slice(-8), winner:room.winner,
-    pendingEffect:room.pendingEffect?{type:room.pendingEffect.type,playerId:room.pendingEffect.playerId,pieceId:room.pendingEffect.pieceId,from:room.pendingEffect.from,targets:room.pendingEffect.targets,...(room.pendingEffect.type==='fox-return'&&room.pendingEffect.playerId===viewerId?{count:room.pendingEffect.count}:{})}:null,
+    pendingEffect:room.pendingEffect?{type:room.pendingEffect.type,playerId:room.pendingEffect.playerId,pieceId:room.pendingEffect.pieceId,from:room.pendingEffect.from,targets:room.pendingEffect.targets,lines:room.pendingEffect.lines,...(room.pendingEffect.type==='fox-return'&&room.pendingEffect.playerId===viewerId?{count:room.pendingEffect.count}:{})}:null,
     lineEvents:room.lineEvents||[], eliminationEvent:room.eliminationEvent||null,
     chainOptions:Object.entries(chainNames).map(([id,name])=>({id:Number(id),name,animals:animals.filter(a=>a.chain===Number(id)).map(a=>({id:a.id,name:a.name,level:a.level,count:a.level===1?7:a.level===2?4:2}))})),
     selectedChains:room.selectedChains||null };
@@ -118,6 +122,10 @@ function resolvePendingEffects(room, actor) {
         if(actor.hand.length>handSize){room.pendingEffect={type:'seal-select',playerId:actor.id,pieceId:exposed.uid,targets:[]};note(room,`${actor.name}觸發海豹揭露效果，抽取1個靈魂後，正在從手中選擇要放到海豹下方的動物。`);return;}
         note(room,'海豹觸發揭露效果，但靈魂庫無法抽取靈魂，能力未執行。');
       }
+      if(exposed.animal==='treefrog'){
+        const targets=adjacentCells(task.cell).filter(cell=>room.board[cell].length);
+        if(targets.length){room.pendingEffect={type:'treefrog-swap',playerId:actor.id,pieceId:exposed.uid,from:task.cell,targets};note(room,'樹蛙觸發揭露效果，選擇相鄰動物交換位置。');return;}
+      }
       if(exposed.animal==='orca'){
         const targets=room.board.map((stack,i)=>stack.length&&stack.at(-1).uid!==exposed.uid?i:-1).filter(i=>i>=0);
         if(targets.length){room.pendingEffect={type:'orca-take',playerId:actor.id,pieceId:exposed.uid,targets};note(room,'虎鯨觸發揭露效果，選擇一格拿走最上方棋子。');return;}
@@ -170,6 +178,12 @@ function resolvePendingEffects(room, actor) {
       } else if(found&&found.piece.animal==='eagle'&&found.cell===task.target){
         const targets=room.board.map((stack,i)=>stack.length&&stack.at(-1).uid!==found.piece.uid?i:-1).filter(i=>i>=0);
         if(targets.length){room.pendingEffect={type:'eagle-flight',playerId:actor.id,pieceId:found.piece.uid,from:found.cell,targets};return;}
+      } else if(found&&found.piece.animal==='grasshopper'&&found.cell===task.target){
+        const player=room.players.find(q=>q.id===actor.id);
+        if(player?.hand.length){room.pendingEffect={type:'grasshopper-swap',playerId:actor.id,pieceId:found.piece.uid,targets:[]};note(room,'蚱蜢觸發移動後能力，正在選擇要交換的手中靈魂。');return;}
+      } else if(found&&found.piece.animal==='crocodile'&&found.cell===task.target){
+        const lines=boardLines.filter(line=>line.includes(found.cell)&&line.some(cell=>cell!==found.cell&&room.board[cell].length));
+        if(lines.length){room.pendingEffect={type:'crocodile-line',playerId:actor.id,pieceId:found.piece.uid,targets:[],lines};note(room,'鱷魚觸發移動後能力，正在選擇要清理的直線。');return;}
       }
     }
   }
@@ -211,7 +225,7 @@ function finishAction(room, p) {
   }
 }
 function resolveLines(room, actor) {
-  const lines=[[0,1,2],[3,4,5],[6,7,8],[0,3,6],[1,4,7],[2,5,8],[0,4,8],[2,4,6]];
+  const lines=boardLines;
   let reward=false;
   while(true){
     const found=[];
@@ -220,7 +234,7 @@ function resolveLines(room, actor) {
       const isChameleonLine=tops.every(t=>t.animal==='chameleon');let chain=-1;
       if(!isChameleonLine){
         const species=tops.map(t=>animals.find(a=>a.id===t.animal));
-        if(species.some(a=>!a||a.chain>=3)||!species.every(a=>a.chain===species[0].chain))continue;
+        if(species.some(a=>!a||a.chain>=4)||!species.every(a=>a.chain===species[0].chain))continue;
         if(species.map(a=>a.level).sort((a,b)=>a-b).join(',')!=='1,2,3')continue;
         chain=species[0].chain;
       }
@@ -240,6 +254,35 @@ function resolveLines(room, actor) {
   if(reward){note(room,`${actor.name}完成生態平衡，獲得一天假期；其他職員各接收一個新靈魂。`);room.players.forEach(q=>{if(q!==actor)draw(room,q,1);});}
 }
 function handle(room,p,msg){
+  if(msg.type==='grasshopperSwap'){
+    const pending=room.pendingEffect;
+    if(!pending||pending.type!=='grasshopper-swap'||pending.playerId!==p.id||!Number.isInteger(msg.handIndex)||msg.handIndex<0||msg.handIndex>=p.hand.length)return;
+    const grasshopper=findPiece(room,pending.pieceId);
+    if(!grasshopper||grasshopper.piece.animal!=='grasshopper'||room.board[grasshopper.cell].at(-1)?.uid!==grasshopper.piece.uid){room.pendingEffect=null;resolvePendingEffects(room,p);broadcast(room);return;}
+    const [chosen]=p.hand.splice(msg.handIndex,1),species=animals.find(a=>a.id===chosen);
+    grasshopper.piece.animal=chosen;
+    if(species.level===0)delete grasshopper.piece.level;else grasshopper.piece.level=species.level;
+    p.hand.push('grasshopper');room.pendingEffect=null;
+    note(room,`${p.name}觸發蚱蜢效果，將蚱蜢與手中一個靈魂交換。`);
+    queueReveal(room,grasshopper.cell,true);
+    resolvePendingEffects(room,p);broadcast(room);return;
+  }
+  if(msg.type==='crocodileLine'){
+    const pending=room.pendingEffect,line=pending?.lines?.[msg.lineIndex],crocodile=pending&&findPiece(room,pending.pieceId);
+    if(!pending||pending.type!=='crocodile-line'||pending.playerId!==p.id||!Array.isArray(line)||!crocodile||!line.includes(crocodile.cell))return;
+    let removed=0;const candidates=[];
+    for(const cell of line){
+      if(cell===crocodile.cell)continue;
+      const stack=room.board[cell],piece=stack.at(-1);if(!piece)continue;
+      stack.pop();room.bag.push(piece.animal);removed++;
+      const exposed=stack.at(-1),species=exposed&&animals.find(a=>a.id===exposed.animal);
+      if(species?.trigger==='揭露')candidates.push({cell,pieceId:exposed.uid});
+    }
+    shuffle(room.bag);room.pendingEffect=null;
+    note(room,`${p.name}觸發鱷魚效果，將所選直線上${removed}隻其他動物送回靈魂庫。`);
+    if(candidates.length)room.effectQueue.unshift({type:'reveal-group',candidates});
+    resolvePendingEffects(room,p);broadcast(room);return;
+  }
   if(msg.type==='effectMove'){
     const pending=room.pendingEffect;
     if(!pending||pending.playerId!==p.id||!pending.targets.includes(msg.to))return;
@@ -259,6 +302,14 @@ function handle(room,p,msg){
       if(!chosen||top?.uid!==chosen.pieceId)return;
       room.pendingEffect=null;room.effectQueue.unshift({type:'reveal',...chosen});
       note(room,`${p.name}選擇觸發一個揭露效果。`);
+      resolvePendingEffects(room,p);broadcast(room);return;
+    }
+    if(pending.type==='treefrog-swap'){
+      const frog=findPiece(room,pending.pieceId),source=frog&&room.board[frog.cell],destination=room.board[msg.to];
+      if(!frog||frog.piece.animal!=='treefrog'||source.at(-1)?.uid!==frog.piece.uid||!pending.targets.includes(msg.to)||!destination?.length)return;
+      const [frogTop]=source.splice(-1),[otherTop]=destination.splice(-1);
+      source.push(otherTop);destination.push(frogTop);room.pendingEffect=null;
+      note(room,`${p.name}觸發樹蛙效果，與第${msg.to+1}格的最上方動物交換位置。`);
       resolvePendingEffects(room,p);broadcast(room);return;
     }
     if(pending.type==='eagle-flight'){
@@ -308,7 +359,7 @@ function handle(room,p,msg){
       note(room,`${p.name}觸發黃鼬效果，移動了一枚其他棋子。`);
       queueReveal(room,pending.from);
       const species=animals.find(a=>a.id===piece.animal);
-      if(species?.trigger==='移動')room.effectQueue.push({type:'after-move',pieceId:piece.uid,target:msg.to});
+      if(species?.trigger==='移動'||species?.trigger==='移動後')room.effectQueue.push({type:'after-move',pieceId:piece.uid,target:msg.to});
       resolvePendingEffects(room,p);broadcast(room);return;
     }
     if(pending.type!=='rabbit-move')return;

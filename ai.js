@@ -1,7 +1,8 @@
 const SPECIES = {
   mole: { chain: 0, level: 1 }, weasel: { chain: 0, level: 2 }, python: { chain: 0, level: 3 },
   rabbit: { chain: 1, level: 1 }, fox: { chain: 1, level: 2 }, eagle: { chain: 1, level: 3 },
-  krill: { chain: 2, level: 1 }, seal: { chain: 2, level: 2 }, orca: { chain: 2, level: 3 }, chameleon: { chain: 3, level: 0 },
+  krill: { chain: 2, level: 1 }, seal: { chain: 2, level: 2 }, orca: { chain: 2, level: 3 },
+  grasshopper: { chain: 3, level: 1 }, treefrog: { chain: 3, level: 2 }, crocodile: { chain: 3, level: 3 }, chameleon: { chain: 4, level: 0 },
 };
 const ANIMAL_IDS = Object.keys(SPECIES);
 const LINES = [[0,1,2],[3,4,5],[6,7,8],[0,3,6],[1,4,7],[2,5,8],[0,4,8],[2,4,6]];
@@ -36,7 +37,7 @@ function completedLines(board) {
     const tops=cells.map(cell=>board[cell].at(-1));if(!tops.every(Boolean))continue;
     if(tops.every(piece=>piece.animal==='chameleon')){found.push(cells);continue;}
     const species=tops.map(piece=>SPECIES[piece.animal]);
-    if(species.some(item=>!item||item.chain>=3)||!species.every(item=>item.chain===species[0].chain))continue;
+    if(species.some(item=>!item||item.chain>=4)||!species.every(item=>item.chain===species[0].chain))continue;
     if(species.map(item=>item.level).sort((a,b)=>a-b).join(',')==='1,2,3')found.push(cells);
   }
   return found;
@@ -53,13 +54,13 @@ function completedLinesForCells(board,cells) {
   const tops=cells.map(cell=>board[cell].at(-1));if(!tops.every(Boolean))return false;
   if(tops.every(piece=>piece.animal==='chameleon'))return true;
   const species=tops.map(piece=>SPECIES[piece.animal]);
-  return !species.some(item=>!item||item.chain>=3)&&species.every(item=>item.chain===species[0].chain)&&species.map(item=>item.level).sort((a,b)=>a-b).join(',')==='1,2,3';
+  return !species.some(item=>!item||item.chain>=4)&&species.every(item=>item.chain===species[0].chain)&&species.map(item=>item.level).sort((a,b)=>a-b).join(',')==='1,2,3';
 }
 function positionScore(board) {
   let score=0;
   for(const cells of LINES){
     const tops=cells.map(cell=>board[cell].at(-1));
-    for(let chain=0;chain<3;chain++){
+    for(let chain=0;chain<4;chain++){
       const matches=tops.reduce((sum,piece)=>sum+(piece&&SPECIES[piece.animal]?.chain===chain?1:0),0);
       const levels=tops.filter(piece=>piece&&SPECIES[piece.animal]?.chain===chain).map(piece=>SPECIES[piece.animal].level);
       const distinct=new Set(levels).size;
@@ -165,6 +166,36 @@ function choosePendingAction(board,hand,pending,botId) {
       if(score>bestScore){bestScore=score;best=candidate.cell;}
     }
     return best===null?null:{type:'effectMove',to:best};
+  }
+  if(pending.type==='grasshopper-swap'){
+    const grasshopper=locate(board,pending.pieceId);if(!grasshopper)return{type:'grasshopperSwap',handIndex:0};
+    let best=0,bestScore=-Infinity;
+    hand.forEach((animal,handIndex)=>{
+      const next=cloneBoard(board),piece=locate(next,pending.pieceId),species=SPECIES[animal];
+      if(!piece||!species)return;
+      next[piece.cell][piece.index].animal=animal;next[piece.cell][piece.index].level=species.level||undefined;
+      const score=strategicValue(next)-cardValue(animal,board,hand)*0.12;
+      if(score>bestScore){bestScore=score;best=handIndex;}
+    });
+    return{type:'grasshopperSwap',handIndex:best};
+  }
+  if(pending.type==='treefrog-swap'){
+    const frog=locate(board,pending.pieceId);if(!frog)return null;
+    let best=null,bestScore=-Infinity;
+    for(const to of pending.targets||[]){const next=cloneBoard(board),current=locate(next,pending.pieceId),other=next[to]?.at(-1);if(!current||!other)continue;
+      const [frogTop]=next[current.cell].splice(-1),[otherTop]=next[to].splice(-1);next[current.cell].push(otherTop);next[to].push(frogTop);
+      const score=strategicValue(next);if(score>bestScore){bestScore=score;best=to;}
+    }
+    return best===null?null:{type:'effectMove',to:best};
+  }
+  if(pending.type==='crocodile-line'){
+    const crocodile=locate(board,pending.pieceId);if(!crocodile)return null;
+    let bestIndex=null,bestScore=-Infinity;
+    for(const [lineIndex,line] of (pending.lines||[]).entries()){
+      const next=cloneBoard(board);for(const cell of line)if(cell!==crocodile.cell)next[cell].pop();
+      const score=strategicValue(next);if(score>bestScore){bestScore=score;bestIndex=lineIndex;}
+    }
+    return bestIndex===null?null:{type:'crocodileLine',lineIndex:bestIndex};
   }
   let targets=pending.targets||[];
   if(pending.type==='weasel-select'){
