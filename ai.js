@@ -91,7 +91,7 @@ function positionScore(board) {
 }
 function boardKey(board) { return board.map(stack=>stack.map(piece=>piece.animal).join('.')).join('/'); }
 
-function generateTurns(board,allowed,owner,limit=Infinity) {
+function generateTurns(board,allowed,owner,limit=Infinity,reserveKrillMoves=false) {
   const results=[],seen=new Set(),animals=[...new Set(allowed.filter(animal=>SPECIES[animal]))];
   const save=(next,createAction,moveAction,order)=>{
     const key=boardKey(next);if(seen.has(key))return;seen.add(key);
@@ -108,7 +108,12 @@ function generateTurns(board,allowed,owner,limit=Infinity) {
     }
   }
   results.sort((a,b)=>(b.wins*170+b.position)-(a.wins*170+a.position));
-  return results.slice(0,limit);
+  const selected=results.slice(0,limit);
+  if(reserveKrillMoves){
+    const rescueCandidates=results.filter(option=>option.move.animal==='krill').slice(0,16);
+    for(const option of rescueCandidates)if(!selected.includes(option))selected.push(option);
+  }
+  return selected;
 }
 function revealRabbitOutcomes(board,cell,depth=0){
   if(depth>=5)return[board];
@@ -155,8 +160,8 @@ function turnBoardOutcomes(board,option){
         ? eagleFlightOutcomes(revealed,movedPiece?.uid)
         : [revealed];
       for(const result of after){
-        if(canCreate(result,option.create.animal,option.create.cell))put(result,option.create.animal,option.create.cell,'ai');
-        settled.push(result);
+        if(!canCreate(result,option.create.animal,option.create.cell))continue;
+        put(result,option.create.animal,option.create.cell,'ai');settled.push(result);
       }
     }
     return settled;
@@ -168,6 +173,39 @@ function turnBoardOutcomes(board,option){
   }
   return outcomes;
 }
+function krillCanReduceHand(board,option,hand,outcome){
+  if(option.move.animal!=='krill')return false;
+  const krillInHand=hand.filter(animal=>animal==='krill').length-(option.order==='create-first'&&option.create.animal==='krill'?1:0);
+  if(krillInHand<1)return false;
+  const stage=cloneBoard(board);
+  if(option.order==='create-first')put(stage,option.create.animal,option.create.cell,'ai');
+  move(stage,option.move);
+  const moved=stage[option.move.to].at(-1),settledStack=outcome[option.move.to]||[];
+  if(!moved)return false;
+  const movedIndex=settledStack.findIndex(piece=>piece.uid===moved.uid);
+  const plannedCreateUid=`sim-${option.create.animal}-${option.create.cell}`;
+  const remainsTop=settledStack.at(-1)?.uid===moved.uid;
+  const coveredOnlyByPlannedBirth=option.order==='move-first'&&settledStack.at(-1)?.uid===plannedCreateUid&&settledStack.at(-2)?.uid===moved.uid;
+  if(movedIndex<0||(!remainsTop&&!coveredOnlyByPlannedBirth))return false;
+  return stage.some(stack=>stack.length===0);
+}
+function expectedHandAfterTurn(board,option,hand,outcome){
+  let count=hand.length-1; // The planned birth uses one soul from hand.
+  if(krillCanReduceHand(board,option,hand,outcome))count--;
+  const revealedOrcas=new Set();
+  if(option.create.animal==='orca'){
+    const created=outcome[option.create.cell]?.at(-1);
+    if(created?.animal==='orca'&&outcome.some((stack,cell)=>stack.length&&cell!==option.create.cell))revealedOrcas.add(created.uid);
+  }
+  const exposedCells=new Set([option.move.from]);
+  if(option.move.animal==='eagle')exposedCells.add(option.move.to);
+  for(const cell of exposedCells){
+    const exposed=outcome[cell]?.at(-1),before=board[cell]?.at(-1);
+    if(exposed?.animal==='orca'&&exposed.uid!==before?.uid&&outcome.some((stack,target)=>stack.length&&target!==cell))revealedOrcas.add(exposed.uid);
+  }
+  count+=revealedOrcas.size;
+  return count;
+}
 function bestResponseScore(board) {
   const replies=generateTurns(board,ANIMAL_IDS,'human',1);
   if(!replies.length)return 0;
@@ -175,12 +213,10 @@ function bestResponseScore(board) {
   return replies[0].wins?100000+replies[0].wins*1000:replies[0].position;
 }
 function chooseTurnPlan(board,hand,owner) {
-  // Orca's reveal effect takes one additional piece into the AI's hand.
-  // When the hand is already at the elimination limit, creating an orca
-  // consumes one piece and then immediately takes one back, leaving the AI
-  // at six when its turn ends. Avoid that plan whenever another plan exists.
-  const available=hand.length>=6?hand.filter(animal=>animal!=='orca'):hand;
-  const options=generateTurns(board,available,owner,36);if(!options.length)return null;
+  // The survival score below accounts for Orca's possible extra soul and may
+  // still choose it when a krill move safely offsets that gain.
+  const available=hand;
+  const options=generateTurns(board,available,owner,36,hand.length>=5&&hand.includes('krill'));if(!options.length)return null;
   let best=null,bestScore=-Infinity;const responseCache=new Map();
   for(const option of options){
     const seenOutcomes=new Set();
@@ -189,10 +225,15 @@ function chooseTurnPlan(board,hand,owner) {
       const wins=completedLines(outcome).length,after=cloneBoard(outcome);clearLines(after);
       const replyKey=boardKey(after),threat=responseCache.has(replyKey)?responseCache.get(replyKey):bestResponseScore(after);
       responseCache.set(replyKey,threat);
+      const finalHand=expectedHandAfterTurn(board,option,hand,outcome);
       // Score the settled board after mandatory effects. In particular, an
       // eagle's first move is not its final location: its flight and any rabbit
       // revealed by that flight must be resolved before judging the turn.
-      const score=wins*1000000-threat*10+positionScore(outcome)*4+positionScore(after);
+      // Staying below the elimination limit has absolute priority over every
+      // board objective; a krill move is credited only when it can actually
+      // spend a krill from hand on an empty cell.
+      const survival=finalHand<6?0:-1e12-(finalHand-5)*1e9;
+      const score=survival+wins*1000000-threat*10+positionScore(outcome)*4+positionScore(after);
       if(score>bestScore){bestScore=score;best={create:option.create,move:option.move,order:option.order,score};}
     }
   }
@@ -200,7 +241,8 @@ function chooseTurnPlan(board,hand,owner) {
 }
 function chooseCreate(board,hand,owner) {
   let best=null,bestScore=-Infinity;
-  for(const animal of [...new Set(hand)]){
+  const available=hand.length>=6?hand.filter(animal=>animal!=='orca'):hand;
+  for(const animal of [...new Set(available)]){
     for(let cell=0;cell<board.length;cell++){
       if(!canCreate(board,animal,cell))continue;
       const next=cloneBoard(board);put(next,animal,cell,owner);
@@ -319,7 +361,9 @@ function choosePendingAction(board,hand,pending,botId) {
     return to===null?null:{type:'effectMove',to};
   }
   if(pending.type==='krill-place'){
-    const to=chooseTarget(board,targets,(next,dest)=>{put(next,'krill',dest,botId,'effect');return true;});
+    const remainingHand=hand.slice(),krillIndex=remainingHand.indexOf('krill');if(krillIndex>=0)remainingHand.splice(krillIndex,1);
+    const safeTargets=targets.filter(dest=>{const next=cloneBoard(board);put(next,'krill',dest,botId,'effect');return remainingHand.some(animal=>next.some((_,cell)=>canCreate(next,animal,cell)));});
+    const to=chooseTarget(board,safeTargets.length?safeTargets:targets,(next,dest)=>{put(next,'krill',dest,botId,'effect');return true;});
     return to===null?null:{type:'effectMove',to};
   }
   if(pending.type==='eagle-flight'){
