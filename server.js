@@ -30,7 +30,7 @@ function broadcast(room) { for (const p of room.players) if (p.socket?.readyStat
 function publicState(room, viewerId) {
   return { code:room.code, started:room.started, hostId:room.hostId, turn:room.turn, active:room.active,
     players:room.players.map(({id,name,hand,color,connected,isBot})=>({id,name,hand:id===viewerId?hand:[],handCount:hand.length,color,connected,isBot:!!isBot})),
-    board:room.board, bagCount:room.bag.length, log:room.log.slice(-100), winner:room.winner,
+    board:room.board, bagCount:room.bag.length, log:room.log.slice(-20), winner:room.winner,
     pendingEffect:room.pendingEffect?{type:room.pendingEffect.type,playerId:room.pendingEffect.playerId,pieceId:room.pendingEffect.pieceId,from:room.pendingEffect.from,targets:room.pendingEffect.targets,lines:room.pendingEffect.lines,...(room.pendingEffect.type==='fox-return'&&room.pendingEffect.playerId===viewerId?{count:room.pendingEffect.count}:{})}:null,
     lineEvents:room.lineEvents||[], eliminationEvent:room.eliminationEvent||null,
     chainOptions:Object.entries(chainNames).map(([id,name])=>({id:Number(id),name,animals:animals.filter(a=>a.chain===Number(id)).map(a=>({id:a.id,name:a.name,level:a.level,count:a.level===1?7:a.level===2?4:2}))})),
@@ -502,3 +502,4 @@ wss.on('connection',socket=>{let player=null,room=null;socket.on('message',raw=>
   if(room&&player)handle(room,player,m);
  });socket.on('close',()=>{if(room&&player){player.connected=false;note(room,`${player.name}暫時離開值勤。`);broadcast(room);}});});
 server.listen(PORT,'0.0.0.0',()=>console.log(`Abstract Tabletop is listening on ${PORT}`));
+
