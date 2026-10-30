@@ -37,8 +37,8 @@
 @media(min-width:1001px){
   .game{grid-template-columns:minmax(220px,260px) minmax(0,1fr) minmax(220px,260px);gap:14px;align-items:start}
   .table{min-width:0}
-  .board-panel{padding:20px}
-  .board{max-width:500px}
+  .board-panel{padding:14px}
+  .board{width:min(100%,max(270px,36vh),380px);max-width:100%;margin:10px auto 4px}
   .log-panel{position:sticky;top:16px;max-height:calc(100vh - 32px);overflow:auto;padding:14px}
 }
 @media(max-width:1000px){
@@ -48,4 +48,12 @@
 @media(max-width:760px){
   .game{grid-template-columns:1fr}
   .log-panel{grid-column:auto;max-height:240px}
+}
+@media(min-width:761px) and (max-width:1000px){
+  .board-panel{padding:14px}
+  .board{width:min(100%,max(270px,36vh),380px);max-width:100%;margin:10px auto 4px}
+}
+@media(max-width:760px){
+  .board-panel{padding:14px}
+  .board{width:min(100%,max(240px,34vh),330px);max-width:100%;margin:10px auto 4px}
 }
