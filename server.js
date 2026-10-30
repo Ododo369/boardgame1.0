@@ -495,7 +495,7 @@ wss.on('connection',socket=>{let player=null,room=null;socket.on('message',raw=>
     if(!r){socket.send(JSON.stringify({type:'error',message:'找不到這個房間代碼。'}));return;}
     if(r.started||r.players.length>=4){socket.send(JSON.stringify({type:'error',message:'房間已開始或人數已滿。'}));return;}
     player={id:Math.random().toString(36).slice(2),name,color:colors[r.players.length],hand:[],connected:true,socket,isBot:false};room=r;r.players.push(player);if(!r.hostId)r.hostId=player.id;
-    if(solo)r.players.push({id:`bot-${r.code}`,name:'AI 同事',color:'#7047a3',hand:[],connected:true,socket:null,isBot:true});
+    if(solo)r.players.push({id:`bot-${r.code}`,name:'AI 員工',color:'#7047a3',hand:[],connected:true,socket:null,isBot:true});
     note(r,`${name}加入轉生部門值勤。`);socket.send(JSON.stringify({type:'joined',id:player.id}));
     broadcast(r);return;
   }
