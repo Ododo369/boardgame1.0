@@ -198,6 +198,19 @@ function chooseTurnPlan(board,hand,owner) {
   }
   return best;
 }
+function chooseCreate(board,hand,owner) {
+  let best=null,bestScore=-Infinity;
+  for(const animal of [...new Set(hand)]){
+    for(let cell=0;cell<board.length;cell++){
+      if(!canCreate(board,animal,cell))continue;
+      const next=cloneBoard(board);put(next,animal,cell,owner);
+      const wins=completedLines(next).length,after=cloneBoard(next);clearLines(after);
+      const score=wins*1000000+positionScore(next)*4+positionScore(after);
+      if(score>bestScore){bestScore=score;best={animal,cell};}
+    }
+  }
+  return best;
+}
 function chooseMove(board,owner) {
   let best=null,bestScore=-Infinity;const responseCache=new Map();
   for(const action of moves(board)){
@@ -329,4 +342,4 @@ function choosePendingAction(board,hand,pending,botId) {
   return null;
 }
 
-module.exports = { chooseTurnPlan, chooseMove, choosePendingAction };
+module.exports = { chooseTurnPlan, chooseCreate, chooseMove, choosePendingAction };

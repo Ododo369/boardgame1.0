@@ -2,7 +2,7 @@ const http = require('http');
 const fs = require('fs');
 const path = require('path');
 const { WebSocketServer } = require('ws');
-const { chooseTurnPlan, chooseMove, choosePendingAction } = require('./ai');
+const { chooseTurnPlan, chooseCreate, chooseMove, choosePendingAction } = require('./ai');
 
 const PORT = process.env.PORT || 3000;
 const rooms = new Map();
@@ -30,7 +30,7 @@ function broadcast(room) { for (const p of room.players) if (p.socket?.readyStat
 function publicState(room, viewerId) {
   return { code:room.code, started:room.started, hostId:room.hostId, turn:room.turn, active:room.active,
     players:room.players.map(({id,name,hand,color,connected,isBot})=>({id,name,hand:id===viewerId?hand:[],handCount:hand.length,color,connected,isBot:!!isBot})),
-    board:room.board, bagCount:room.bag.length, log:room.log.slice(-20), winner:room.winner,
+    board:room.board, bagCount:room.bag.length, log:room.log.slice(-17), winner:room.winner,
     pendingEffect:room.pendingEffect?{type:room.pendingEffect.type,playerId:room.pendingEffect.playerId,pieceId:room.pendingEffect.pieceId,from:room.pendingEffect.from,targets:room.pendingEffect.targets,lines:room.pendingEffect.lines,...(room.pendingEffect.type==='fox-return'&&room.pendingEffect.playerId===viewerId?{count:room.pendingEffect.count}:{})}:null,
     lineEvents:room.lineEvents||[], eliminationEvent:room.eliminationEvent||null,
     chainOptions:Object.entries(chainNames).map(([id,name])=>({id:Number(id),name,animals:animals.filter(a=>a.chain===Number(id)).map(a=>({id:a.id,name:a.name,level:a.level,count:a.level===1?7:a.level===2?4:2}))})),
@@ -456,6 +456,18 @@ function runBotStep(room,bot){
       return;
     }
     if(!room.active?.created){
+      if(room.active?.moved){
+        const planned=room.botPlan?.playerId===bot.id?room.botPlan.create:null;
+        const create=planned&&bot.hand.includes(planned.animal)&&canCreate(room,planned.animal,planned.cell)
+          ?planned:chooseCreate(room.board,bot.hand,bot.id);
+        if(!create){
+          note(room,`${bot.name}找不到符合規則的出生位置，接收1個靈魂並跳過剩餘行動。`);
+          draw(room,bot,1);room.active.created=true;room.botPlan=null;finishAction(room,bot);broadcast(room);return;
+        }
+        room.botPlan={playerId:bot.id,create,order:'create-first'};
+        handle(room,bot,{type:'create',animal:create.animal,cell:create.cell});
+        return;
+      }
       let plan=room.botPlan?.playerId===bot.id?room.botPlan:chooseTurnPlan(room.board,bot.hand,bot.id);
       if(!plan){handle(room,bot,{type:'skip'});return;}
       room.botPlan={playerId:bot.id,create:plan.create,move:plan.move,order:plan.order};
@@ -502,4 +514,5 @@ wss.on('connection',socket=>{let player=null,room=null;socket.on('message',raw=>
   if(room&&player)handle(room,player,m);
  });socket.on('close',()=>{if(room&&player){player.connected=false;note(room,`${player.name}暫時離開值勤。`);broadcast(room);}});});
 server.listen(PORT,'0.0.0.0',()=>console.log(`Abstract Tabletop is listening on ${PORT}`));
+
 
