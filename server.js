@@ -30,7 +30,7 @@ function broadcast(room) { for (const p of room.players) if (p.socket?.readyStat
 function publicState(room, viewerId) {
   return { code:room.code, started:room.started, hostId:room.hostId, turn:room.turn, active:room.active,
     players:room.players.map(({id,name,hand,color,connected,isBot})=>({id,name,hand:id===viewerId?hand:[],handCount:hand.length,color,connected,isBot:!!isBot})),
-    board:room.board, bagCount:room.bag.length, log:room.log.slice(-8), winner:room.winner,
+    board:room.board, bagCount:room.bag.length, log:room.log.slice(-100), winner:room.winner,
     pendingEffect:room.pendingEffect?{type:room.pendingEffect.type,playerId:room.pendingEffect.playerId,pieceId:room.pendingEffect.pieceId,from:room.pendingEffect.from,targets:room.pendingEffect.targets,lines:room.pendingEffect.lines,...(room.pendingEffect.type==='fox-return'&&room.pendingEffect.playerId===viewerId?{count:room.pendingEffect.count}:{})}:null,
     lineEvents:room.lineEvents||[], eliminationEvent:room.eliminationEvent||null,
     chainOptions:Object.entries(chainNames).map(([id,name])=>({id:Number(id),name,animals:animals.filter(a=>a.chain===Number(id)).map(a=>({id:a.id,name:a.name,level:a.level,count:a.level===1?7:a.level===2?4:2}))})),
@@ -47,7 +47,7 @@ function draw(room, player, n=1) {
       if(exposed&&animals.find(a=>a.id===exposed.animal)?.trigger==='揭露')candidates.push({cell,pieceId:exposed.uid});
     }
     if(candidates.length)room.effectQueue.unshift({type:'reveal-group',candidates});
-    if(returned){shuffle(room.bag);note(room,`靈魂庫不足以分派${n}個靈魂，已將棋盤各格動物的靈魂收回並重新洗勻。`);}
+    if(returned){shuffle(room.bag);note(room,`冥界靈魂庫不足以分派${n}個靈魂，已將棋盤各格動物的靈魂收回並重新洗勻。`);}
   }
   for(let i=0;i<n&&room.bag.length;i++)player.hand.push(room.bag.pop());
 }
@@ -185,7 +185,7 @@ function resolvePendingEffects(room, actor) {
         // Crocodile may choose any of the four lines passing through its cell,
         // including a line with no other animals on it.
         const lines=boardLines.filter(line=>line.includes(found.cell));
-        if(lines.length){room.pendingEffect={type:'crocodile-line',playerId:actor.id,pieceId:found.piece.uid,targets:[],lines};note(room,'鱷魚觸發移動後能力，正在選擇要清理的路線。');return;}
+        if(lines.length){room.pendingEffect={type:'crocodile-line',playerId:actor.id,pieceId:found.piece.uid,targets:[],lines};note(room,'鱷魚觸發移動後能力，正在選擇要清理的直線。');return;}
       }
     }
   }
@@ -195,7 +195,7 @@ function advanceTurn(room, p) {
   const currentIndex=room.players.findIndex(q=>q.id===p.id);
   const eliminated=p.hand.length>=6;
   if(eliminated){
-    note(room,`${p.name}回合結束時負責的靈魂達${p.hand.length}個（至少6個），向上司提出辭職；靈魂交回冥界，由下一任職員接手。`);
+    note(room,`${p.name}回合結束時負責的靈魂達${p.hand.length}個（至少6個），遭上頭解聘；靈魂交回冥界，由下一任職員接手。`);
     room.eliminationEvent={id:room.nextEliminationEventId++,playerName:p.name,handCount:p.hand.length};
     if(p.socket?.readyState===1)p.socket.send(JSON.stringify({type:'eliminated',event:room.eliminationEvent}));
     room.bag.push(...p.hand);p.hand=[];shuffle(room.bag);
@@ -205,7 +205,7 @@ function advanceTurn(room, p) {
   if(room.players.length){
     room.turn=eliminated?currentIndex%room.players.length:(currentIndex+1)%room.players.length;
     draw(room,room.players[room.turn]);
-    note(room,`${room.players[room.turn].name}開始本日行程。`);
+    note(room,`${room.players[room.turn].name}開始值勤。`);
     if(room.effectQueue.length)resolvePendingEffects(room,room.players[room.turn]);
   }
 }
@@ -249,7 +249,7 @@ function resolveLines(room, actor) {
     for(const line of found){
       const event={id:room.nextLineEventId++,cells:line.cells.slice(),kind:line.kind};room.lineEvents.push(event);
       setTimeout(()=>{room.lineEvents=room.lineEvents.filter(e=>e.id!==event.id);broadcast(room);},1500);
-      note(room,line.kind==='chameleon'?'完成平衡，動物靈魂自然回歸冥界。':`${chainNames[line.chain]}完成平衡，動物靈魂自然回歸冥界。`);
+      note(room,line.kind==='chameleon'?'三隻變色龍維持平衡，靈魂自然回歸冥界。':`${chainNames[line.chain]}完成平衡，動物靈魂自然回歸冥界。`);
     }
     reward=true;
   }
@@ -495,10 +495,10 @@ wss.on('connection',socket=>{let player=null,room=null;socket.on('message',raw=>
     if(!r){socket.send(JSON.stringify({type:'error',message:'找不到這個房間代碼。'}));return;}
     if(r.started||r.players.length>=4){socket.send(JSON.stringify({type:'error',message:'房間已開始或人數已滿。'}));return;}
     player={id:Math.random().toString(36).slice(2),name,color:colors[r.players.length],hand:[],connected:true,socket,isBot:false};room=r;r.players.push(player);if(!r.hostId)r.hostId=player.id;
-    if(solo)r.players.push({id:`bot-${r.code}`,name:'AI 員工',color:'#7047a3',hand:[],connected:true,socket:null,isBot:true});
+    if(solo)r.players.push({id:`bot-${r.code}`,name:'AI 同事',color:'#7047a3',hand:[],connected:true,socket:null,isBot:true});
     note(r,`${name}加入轉生部門值勤。`);socket.send(JSON.stringify({type:'joined',id:player.id}));
     broadcast(r);return;
   }
   if(room&&player)handle(room,player,m);
- });socket.on('close',()=>{if(room&&player){player.connected=false;note(room,`${player.name}暫時離開遊戲。`);broadcast(room);}});});
+ });socket.on('close',()=>{if(room&&player){player.connected=false;note(room,`${player.name}暫時離開值勤。`);broadcast(room);}});});
 server.listen(PORT,'0.0.0.0',()=>console.log(`Abstract Tabletop is listening on ${PORT}`));
