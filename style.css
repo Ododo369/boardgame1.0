@@ -66,3 +66,5 @@
   .log-panel{display:flex;flex-direction:column;min-height:0}
   .log-panel #log{min-height:0;overflow-y:auto;overscroll-behavior:contain}
 }
+.log-line.log-turn-start{margin:4px 0;padding:9px 10px;border:1px solid #d9c58d;border-left:4px solid #b58a2d;border-radius:8px;background:#fff7df;color:#624b20;font-weight:700}
+.log-turn-marker{display:inline-block;margin-right:5px;padding:2px 6px;border-radius:99px;background:#e6c66e;color:#503b13;font-size:9px;font-weight:800;letter-spacing:.04em;vertical-align:1px}
