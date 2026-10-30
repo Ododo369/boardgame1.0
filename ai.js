@@ -110,6 +110,64 @@ function generateTurns(board,allowed,owner,limit=Infinity) {
   results.sort((a,b)=>(b.wins*170+b.position)-(a.wins*170+a.position));
   return results.slice(0,limit);
 }
+function revealRabbitOutcomes(board,cell,depth=0){
+  if(depth>=5)return[board];
+  const rabbit=board[cell]?.at(-1);
+  if(!rabbit)return[board];
+  if(rabbit.animal==='fox')return[board]; // Drawing and returning souls does not change the board.
+  if(rabbit.animal!=='rabbit')return[board];
+  const outcomes=[];
+  for(const to of adjacent(cell)){
+    const next=cloneBoard(board);move(next,{from:cell,to});
+    // A rabbit moving away can reveal another rabbit or fox, which resolves
+    // before the original action's remaining after-move effects.
+    outcomes.push(...revealRabbitOutcomes(next,cell,depth+1));
+  }
+  return outcomes.length?outcomes:[board];
+}
+function eagleFlightOutcomes(board,eagleUid){
+  const eagle=locate(board,eagleUid);
+  if(!eagle||board[eagle.cell].at(-1)?.uid!==eagleUid)return[board];
+  const outcomes=[];
+  for(let target=0;target<board.length;target++){
+    if(target===eagle.cell||!board[target].length)continue;
+    const next=cloneBoard(board),bird=locate(next,eagleUid);
+    const [piece]=next[bird.cell].splice(bird.index,1);next[target].push(piece);
+    outcomes.push(...revealRabbitOutcomes(next,bird.cell));
+  }
+  // If there is no legal perch, the server resolves the move without a flight.
+  return outcomes.length?outcomes:[board];
+}
+function turnBoardOutcomes(board,option){
+  let base=cloneBoard(board);
+  if(option.order==='create-first'){
+    put(base,option.create.animal,option.create.cell,'ai');
+    move(base,option.move);
+  }else{
+    move(base,option.move);
+    const movedPiece=base[option.move.to]?.at(-1);
+    // The reveal at the vacated square resolves before the moved animal's
+    // after-move ability (notably the eagle flight).
+    const revealOutcomes=revealRabbitOutcomes(base,option.move.from);
+    const settled=[];
+    for(const revealed of revealOutcomes){
+      let after=option.move.animal==='eagle'
+        ? eagleFlightOutcomes(revealed,movedPiece?.uid)
+        : [revealed];
+      for(const result of after){
+        if(canCreate(result,option.create.animal,option.create.cell))put(result,option.create.animal,option.create.cell,'ai');
+        settled.push(result);
+      }
+    }
+    return settled;
+  }
+  const movedPiece=base[option.move.to]?.at(-1);
+  let outcomes=revealRabbitOutcomes(base,option.move.from);
+  if(option.move.animal==='eagle'){
+    outcomes=outcomes.flatMap(state=>eagleFlightOutcomes(state,movedPiece?.uid));
+  }
+  return outcomes;
+}
 function bestResponseScore(board) {
   const replies=generateTurns(board,ANIMAL_IDS,'human',1);
   if(!replies.length)return 0;
@@ -122,26 +180,39 @@ function chooseTurnPlan(board,hand,owner) {
   // consumes one piece and then immediately takes one back, leaving the AI
   // at six when its turn ends. Avoid that plan whenever another plan exists.
   const available=hand.length>=6?hand.filter(animal=>animal!=='orca'):hand;
-  const options=generateTurns(board,available,owner,18);if(!options.length)return null;
-  let best=null,bestScore=-Infinity;
+  const options=generateTurns(board,available,owner,36);if(!options.length)return null;
+  let best=null,bestScore=-Infinity;const responseCache=new Map();
   for(const option of options){
-    const after=cloneBoard(option.board);clearLines(after);
-    const threat=bestResponseScore(after);
-    // Priority order: make a line now, prevent an immediate human line, then
-    // improve the board position. The wide gaps keep positional points from
-    // ever outweighing either tactical objective.
-    const score=option.wins*1000000-threat*10+option.position*4+positionScore(after);
-    if(score>bestScore){bestScore=score;best={create:option.create,move:option.move,order:option.order,score};}
+    const seenOutcomes=new Set();
+    for(const outcome of turnBoardOutcomes(board,option)){
+      const key=boardKey(outcome);if(seenOutcomes.has(key))continue;seenOutcomes.add(key);
+      const wins=completedLines(outcome).length,after=cloneBoard(outcome);clearLines(after);
+      const replyKey=boardKey(after),threat=responseCache.has(replyKey)?responseCache.get(replyKey):bestResponseScore(after);
+      responseCache.set(replyKey,threat);
+      // Score the settled board after mandatory effects. In particular, an
+      // eagle's first move is not its final location: its flight and any rabbit
+      // revealed by that flight must be resolved before judging the turn.
+      const score=wins*1000000-threat*10+positionScore(outcome)*4+positionScore(after);
+      if(score>bestScore){bestScore=score;best={create:option.create,move:option.move,order:option.order,score};}
+    }
   }
   return best;
 }
 function chooseMove(board,owner) {
-  let best=null,bestScore=-Infinity;
+  let best=null,bestScore=-Infinity;const responseCache=new Map();
   for(const action of moves(board)){
-    const next=cloneBoard(board);move(next,action);const wins=completedLines(next).length;
-    const cleared=cloneBoard(next);clearLines(cleared);
-    const score=wins*1000000-bestResponseScore(cleared)*10+positionScore(next)*4;
-    if(score>bestScore){bestScore=score;best=action;}
+    const next=cloneBoard(board);move(next,action);const movedPiece=next[action.to].at(-1);
+    let outcomes=revealRabbitOutcomes(next,action.from);
+    if(action.animal==='eagle')outcomes=outcomes.flatMap(state=>eagleFlightOutcomes(state,movedPiece.uid));
+    const seen=new Set();
+    for(const outcome of outcomes){
+      const key=boardKey(outcome);if(seen.has(key))continue;seen.add(key);
+      const wins=completedLines(outcome).length,cleared=cloneBoard(outcome);clearLines(cleared);
+      const replyKey=boardKey(cleared),threat=responseCache.has(replyKey)?responseCache.get(replyKey):bestResponseScore(cleared);
+      responseCache.set(replyKey,threat);
+      const score=wins*1000000-threat*10+positionScore(outcome)*4;
+      if(score>bestScore){bestScore=score;best=action;}
+    }
   }
   return best;
 }
