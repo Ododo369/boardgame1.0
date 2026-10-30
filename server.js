@@ -13,13 +13,13 @@ const animals = [
   { id: 'python', name: '蟒蛇', chain: 0, level: 3, trigger: '揭露', effect: '選擇一個相鄰格，將該格最上方棋子放至自身下方' },
   { id: 'rabbit', name: '兔子', chain: 1, level: 1, trigger: '揭露', effect: '自身移動一次' },
   { id: 'fox', name: '赤狐', chain: 1, level: 2, trigger: '揭露', effect: '抽2枚棋子，再選2枚放回靈魂庫' },
-  { id: 'eagle', name: '老鷹', chain: 1, level: 3, trigger: '移動後', effect: '將老鷹放到任意一隻最上方的動物上方' },
+  { id: 'eagle', name: '老鷹', chain: 1, level: 3, trigger: '移動後', effect: '將老鷹放到任意一隻動物上方' },
   { id: 'krill', name: '磷蝦', chain: 2, level: 1, trigger: '移動', effect: '將手中的1隻磷蝦放到空格' },
   { id: 'seal', name: '海豹', chain: 2, level: 2, trigger: '揭露', effect: '抽1個靈魂加入手中，再從手中選1個放到自身下方' },
-  { id: 'orca', name: '虎鯨', chain: 2, level: 3, trigger: '揭露', effect: '將自身以外1枚最上方動物拿到手中' },
+  { id: 'orca', name: '虎鯨', chain: 2, level: 3, trigger: '揭露', effect: '將自身以外1枚動物拿到手中' },
   { id: 'grasshopper', name: '蚱蜢', chain: 3, level: 1, trigger: '移動後', effect: '將自身與手中1個靈魂交換；手中沒有靈魂時不觸發' },
-  { id: 'treefrog', name: '樹蛙', chain: 3, level: 2, trigger: '揭露', effect: '將自身與相鄰格1隻最上方動物交換' },
-  { id: 'crocodile', name: '鱷魚', chain: 3, level: 3, trigger: '移動後', effect: '選擇經過自身的橫、直或斜線，將線上自身以外最上方動物放回靈魂庫' },
+  { id: 'treefrog', name: '樹蛙', chain: 3, level: 2, trigger: '揭露', effect: '將自身與相鄰格1隻動物交換' },
+  { id: 'crocodile', name: '鱷魚', chain: 3, level: 3, trigger: '移動後', effect: '選擇經過自身的橫、直或斜線，將線上自身以外的動物放回靈魂庫' },
   { id: 'chameleon', name: '變色龍', chain: 4, level: 0, trigger: '無', effect: '可視為任意等級' },
 ];
 const chainNames = { 0:'食物鏈 A', 1:'食物鏈 B', 2:'食物鏈 C', 3:'食物鏈 D' };
@@ -47,7 +47,7 @@ function draw(room, player, n=1) {
       if(exposed&&animals.find(a=>a.id===exposed.animal)?.trigger==='揭露')candidates.push({cell,pieceId:exposed.uid});
     }
     if(candidates.length)room.effectQueue.unshift({type:'reveal-group',candidates});
-    if(returned){shuffle(room.bag);note(room,`冥界靈魂庫不足以分派${n}個靈魂，已將棋盤各格最上方動物的靈魂收回並重新洗勻。`);}
+    if(returned){shuffle(room.bag);note(room,`冥界靈魂庫不足以分派${n}個靈魂，已將棋盤各格動物的靈魂收回並重新洗勻。`);}
   }
   for(let i=0;i<n&&room.bag.length;i++)player.hand.push(room.bag.pop());
 }
@@ -128,11 +128,11 @@ function resolvePendingEffects(room, actor) {
       }
       if(exposed.animal==='orca'){
         const targets=room.board.map((stack,i)=>stack.length&&stack.at(-1).uid!==exposed.uid?i:-1).filter(i=>i>=0);
-        if(targets.length){room.pendingEffect={type:'orca-take',playerId:actor.id,pieceId:exposed.uid,targets};note(room,'虎鯨觸發揭露效果，選擇一格拿走最上方動物。');return;}
+        if(targets.length){room.pendingEffect={type:'orca-take',playerId:actor.id,pieceId:exposed.uid,targets};note(room,'虎鯨觸發揭露效果，選擇一格拿走動物。');return;}
       }
       if(exposed.animal==='python'){
         const targets=adjacentCells(task.cell).filter(cell=>room.board[cell].length);
-        if(targets.length){room.pendingEffect={type:'python-collect',playerId:actor.id,pieceId:exposed.uid,targets};note(room,'蟒蛇觸發揭露效果，選擇一個相鄰格的最上方動物綁走。');return;}
+        if(targets.length){room.pendingEffect={type:'python-collect',playerId:actor.id,pieceId:exposed.uid,targets};note(room,'蟒蛇觸發揭露效果，選擇一個相鄰格的動物綁走。');return;}
       }
       // Other reveal effects are handled by their effect-specific resolvers as they are implemented.
       continue;
@@ -311,7 +311,7 @@ function handle(room,p,msg){
       if(!frog||frog.piece.animal!=='treefrog'||source.at(-1)?.uid!==frog.piece.uid||!pending.targets.includes(msg.to)||!destination?.length)return;
       const [frogTop]=source.splice(-1),[otherTop]=destination.splice(-1);
       source.push(otherTop);destination.push(frogTop);room.pendingEffect=null;
-      note(room,`${p.name}觸發樹蛙效果，與第${msg.to+1}格的最上方動物交換位置。`);
+      note(room,`${p.name}觸發樹蛙效果，與第${msg.to+1}格的動物交換位置。`);
       resolvePendingEffects(room,p);broadcast(room);return;
     }
     if(pending.type==='eagle-flight'){
@@ -323,7 +323,7 @@ function handle(room,p,msg){
       const refreshed=findPiece(room,pending.pieceId),[bird]=room.board[refreshed.cell].splice(refreshed.index,1);
       destination.push(bird);
       room.pendingEffect=null;
-      note(room,`${p.name}觸發老鷹效果，將老鷹放到第${msg.to+1}格最上方動物之上。`);
+      note(room,`${p.name}觸發老鷹效果，將老鷹放到第${msg.to+1}格動物之上。`);
       const top=room.board[refreshed.cell].at(-1);
       if(top&&top.uid!==previousTop)queueReveal(room,refreshed.cell,true);
       resolvePendingEffects(room,p);broadcast(room);return;
@@ -332,7 +332,7 @@ function handle(room,p,msg){
       const stack=room.board[msg.to],taken=stack.at(-1);
       if(!taken)return;
       stack.pop();p.hand.push(taken.animal);room.pendingEffect=null;
-      note(room,`${p.name}觸發虎鯨效果，將一隻最上方動物的靈魂收回拿到手中。`);
+      note(room,`${p.name}觸發虎鯨效果，將一隻動物的靈魂收回拿到手中。`);
       queueReveal(room,msg.to,true);
       resolvePendingEffects(room,p);broadcast(room);return;
     }
@@ -343,7 +343,7 @@ function handle(room,p,msg){
       source.pop();const stack=room.board[python.cell],currentPython=stack.findIndex(piece=>piece.uid===pending.pieceId);
       stack.splice(currentPython,0,moved);
       room.pendingEffect=null;
-      note(room,'蟒蛇將所選相鄰格最上方的一隻動物放至自身下方。');
+      note(room,'蟒蛇將所選相鄰格一隻動物放至自身下方。');
       queueReveal(room,msg.to,true);
       resolvePendingEffects(room,p);broadcast(room);return;
     }
@@ -424,7 +424,7 @@ function handle(room,p,msg){
       room.effectQueue=[];room.effectSeen=new Set();
       queueReveal(room,msg.from);
       if(species.trigger==='移動'||species.trigger==='移動後')room.effectQueue.push({type:'after-move',pieceId:piece.uid,target:msg.to});
-      note(room,species.id==='eagle'?`${p.name}將老鷹移到相鄰格；移動後可將老鷹放到場上任意一隻最上方動物上方。`:`${p.name}移動了${species.name}。`);resolvePendingEffects(room,p);
+      note(room,species.id==='eagle'?`${p.name}將老鷹移到相鄰格；移動後可將老鷹放到場上任意一隻動物上方。`:`${p.name}移動了${species.name}。`);resolvePendingEffects(room,p);
     } else room.board[msg.from].push(piece);
   }
   if(msg.type==='skip' && !room.active){draw(room,p,1);note(room,`${p.name}無法完成本回合行動，接收1個靈魂並跳過。`);if(room.effectQueue.length){room.advanceAfterEffects=p.id;resolvePendingEffects(room,p);}else advanceTurn(room,p);}
