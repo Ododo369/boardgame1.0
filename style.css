@@ -59,7 +59,7 @@
 }
 @media(min-width:1001px){
   .game{align-items:stretch}
-  .log-panel{position:static;max-height:none;height:var(--hand-panel-height,180px);min-height:0;align-self:end;display:flex;flex-direction:column;overflow:hidden}
+  .log-panel{position:static;max-height:none;height:100%;min-height:0;align-self:stretch;display:flex;flex-direction:column;overflow:hidden}
   .log-panel #log{flex:1;min-height:0;overflow-y:auto;overscroll-behavior:contain}
 }
 @media(max-width:1000px){
