@@ -97,6 +97,10 @@ function findPiece(room, uid) {
   return null;
 }
 function placeMovedPiece(room, piece, targetCell) {
+  // A piece that is covered can be revealed again later in this effect chain.
+  // Let that new reveal trigger its ability even if it already triggered once.
+  const coveredTop=room.board[targetCell].at(-1);
+  if(coveredTop)room.effectSeen.delete(coveredTop.uid);
   room.board[targetCell].push(piece);
 }
 function resolvePendingEffects(room, actor) {
@@ -357,7 +361,7 @@ function handle(room,p,msg){
     if(pending.type==='weasel-target'){
       const source=room.board[pending.from],piece=source.at(-1);
       if(!piece||piece.uid!==pending.pieceId||!pending.targets.includes(msg.to))return;
-      source.pop();room.board[msg.to].push(piece);room.pendingEffect=null;
+      source.pop();placeMovedPiece(room,piece,msg.to);room.pendingEffect=null;
       note(room,`${p.name}觸發黃鼬效果，移動了一枚其他棋子。`);
       queueReveal(room,pending.from);
       const species=animals.find(a=>a.id===piece.animal);
