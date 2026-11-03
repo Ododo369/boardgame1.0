@@ -47,7 +47,7 @@ function publicState(room, viewerId) {
     chainOptions:Object.entries(chainNames).map(([id,name])=>({id:Number(id),name,animals:animals.filter(a=>a.chain===Number(id)).map(a=>({id:a.id,name:a.name,level:a.level,count:a.level===1?7:a.level===2?4:2}))})),
     selectedChains:room.selectedChains||null };
 }
-function note(room, text) { room.log.push(text); }
+function note(room, text, type='normal') { room.log.push({text,type}); }
 function draw(room, player, n=1) {
   if(n>0&&room.bag.length<n){
     let returned=0;const candidates=[];
@@ -220,7 +220,7 @@ function advanceTurn(room, p) {
   if(room.players.length){
     room.turn=eliminated?currentIndex%room.players.length:(currentIndex+1)%room.players.length;
     draw(room,room.players[room.turn]);
-    note(room,`${room.players[room.turn].name}開始值勤。`);
+    note(room,`${room.players[room.turn].name}開始值勤。`,'turn-start');
     if(room.effectQueue.length)resolvePendingEffects(room,room.players[room.turn]);
   }
 }
@@ -248,7 +248,7 @@ function clearConnectionLines(room, lines) {
   for(const line of lines){
     const event={id:room.nextLineEventId++,cells:line.cells.slice(),kind:line.kind};room.lineEvents.push(event);
     setTimeout(()=>{room.lineEvents=room.lineEvents.filter(e=>e.id!==event.id);broadcast(room);},1500);
-    note(room,line.kind==='chameleon'?'三隻變色龍維持平衡，靈魂回歸冥界。':`${chainNames[line.chain]}完成平衡，靈魂回歸冥界。`);
+    note(room,line.kind==='chameleon'?'三隻變色龍維持平衡，靈魂回歸冥界。':`${chainNames[line.chain]}完成平衡，靈魂回歸冥界。`,'connection');
   }
 }
 function resolveLines(room, actor, reward=false) {
@@ -276,7 +276,7 @@ function resolveLines(room, actor, reward=false) {
     clearConnectionLines(room,found);
     reward=true;
   }
-  if(reward){note(room,`${actor.name}完成生態平衡，獲得一天假期；其他員工各抽取一個靈魂。`);room.players.forEach(q=>{if(q!==actor)draw(room,q,1);});}
+  if(reward){note(room,`${actor.name}完成生態平衡，獲得一天假期；其他員工各抽取一個靈魂。`,'connection');room.players.forEach(q=>{if(q!==actor)draw(room,q,1);});}
 }
 function handle(room,p,msg){
   if(msg.type==='lineChoice'){
