@@ -294,6 +294,16 @@ function cardValue(animal,board,hand) {
   return value;
 }
 function choosePendingAction(board,hand,pending,botId) {
+  if(pending.type==='line-choice'){
+    // Resolve a winning line first when possible; otherwise remove the line
+    // that best improves the board after its top pieces are cleared.
+    let bestIndex=null,bestScore=-Infinity;
+    for(const [lineIndex,line] of (pending.lines||[]).entries()){
+      const next=cloneBoard(board);for(const cell of line.cells||[])next[cell]?.pop();
+      const score=strategicValue(next);if(score>bestScore){bestScore=score;bestIndex=lineIndex;}
+    }
+    return bestIndex===null?null:{type:'lineChoice',lineIndex:bestIndex};
+  }
   if(pending.type==='fox-return'){
     const count=pending.count||2;
     return{type:'foxReturn',animals:hand.map((animal,index)=>({animal,index,value:cardValue(animal,board,hand)})).sort((a,b)=>a.value-b.value).slice(0,count).map(item=>item.animal)};
