@@ -56,20 +56,22 @@ function completedLinesForCells(board,cells) {
   const species=tops.map(piece=>SPECIES[piece.animal]);
   return !species.some(item=>!item||item.chain>=4)&&species.every(item=>item.chain===species[0].chain)&&species.map(item=>item.level).sort((a,b)=>a-b).join(',')==='1,2,3';
 }
-function positionScore(board) {
+function positionScore(board,owner='ai') {
   let score=0;
   for(const cells of LINES){
     const tops=cells.map(cell=>board[cell].at(-1));
     for(let chain=0;chain<4;chain++){
-      const matches=tops.reduce((sum,piece)=>sum+(piece&&SPECIES[piece.animal]?.chain===chain?1:0),0);
-      const levels=tops.filter(piece=>piece&&SPECIES[piece.animal]?.chain===chain).map(piece=>SPECIES[piece.animal].level);
+      const matching=tops.filter(piece=>piece&&SPECIES[piece.animal]?.chain===chain);
+      const matches=matching.length,levels=matching.map(piece=>SPECIES[piece.animal].level);
       const distinct=new Set(levels).size;
-      if(matches===1)score+=0.8;
-      if(matches===2)score+=distinct===2?8:3;
-      if(matches===3&&distinct===3)score+=16;
+      const own=matching.filter(piece=>piece.owner===owner).length;
+      if(matches===1)score+=own?0.8:0.1;
+      if(matches===2)score+=distinct===2?(own===2?10:-6):(own===2?2:-1);
+      if(matches===3&&distinct===3)score+=own===3?20:1;
     }
-    const chameleons=tops.filter(piece=>piece?.animal==='chameleon').length;
-    if(chameleons===1)score+=0.8;if(chameleons===2)score+=9;if(chameleons===3)score+=18;
+    const chameleonPieces=tops.filter(piece=>piece?.animal==='chameleon'),chameleons=chameleonPieces.length;
+    const ownChameleons=chameleonPieces.filter(piece=>piece.owner===owner).length;
+    if(chameleons===1)score+=ownChameleons?0.8:0.1;if(chameleons===2)score+=ownChameleons===2?10:-6;if(chameleons===3)score+=ownChameleons===3?20:1;
 
     // Pieces directly beneath each top animal are the next likely animals to
     // become visible. Give them a smaller, separate value so the AI considers
@@ -79,23 +81,41 @@ function positionScore(board) {
       for(let chain=0;chain<4;chain++){
         const levels=layer.filter(piece=>piece&&SPECIES[piece.animal]?.chain===chain).map(piece=>SPECIES[piece.animal].level);
         const distinct=new Set(levels).size;
-        if(levels.length===1)score+=0.18/(depth-1);
-        if(levels.length===2)score+=(distinct===2?1.8:0.55)/(depth-1);
+        const knownLayer=cells.map(cell=>board[cell].at(-depth)).filter(piece=>piece&&SPECIES[piece.animal]?.chain===chain);
+        const ownLayer=knownLayer.filter(piece=>piece.owner===owner).length;
+        if(levels.length===1)score+=(ownLayer?0.18:0.02)/(depth-1);
+        if(levels.length===2)score+=(distinct===2?(ownLayer===2?1.8:-0.9):(ownLayer===2?0.55:-0.2))/(depth-1);
       }
-      const buriedChameleons=layer.filter(piece=>piece?.animal==='chameleon').length;
-      if(buriedChameleons===1)score+=0.18/(depth-1);
-      if(buriedChameleons===2)score+=1.8/(depth-1);
+      const buriedChameleons=layer.filter(piece=>piece?.animal==='chameleon'),ownBuriedChameleons=buriedChameleons.filter(piece=>piece.owner===owner).length;
+      if(buriedChameleons.length===1)score+=(ownBuriedChameleons?0.18:0.02)/(depth-1);
+      if(buriedChameleons.length===2)score+=(ownBuriedChameleons===2?1.8:-0.9)/(depth-1);
     }
   }
   return score;
 }
-function boardKey(board) { return board.map(stack=>stack.map(piece=>piece.animal).join('.')).join('/'); }
+function defenseRisk(board,owner) {
+  let risk=0;const chainAnimals=Array.from({length:4},()=>new Set()),chainHasOpponent=Array(4).fill(false);
+  for(const stack of board){const piece=stack.at(-1),species=piece&&SPECIES[piece.animal];if(!species||species.chain>=4)continue;chainAnimals[species.chain].add(piece.animal);if(piece.owner!==owner)chainHasOpponent[species.chain]=true;}
+  for(let chain=0;chain<4;chain++)if(chainHasOpponent[chain]&&chainAnimals[chain].size>=2)risk+=18*(chainAnimals[chain].size-1);
+  for(const cells of LINES){
+    const tops=cells.map(cell=>board[cell].at(-1));
+    for(let chain=0;chain<4;chain++){
+      const matching=tops.filter(piece=>piece&&SPECIES[piece.animal]?.chain===chain);
+      const different=new Set(matching.map(piece=>piece.animal)).size;
+      if(different>=2&&matching.some(piece=>piece.owner!==owner))risk+=different===3?80:55;
+    }
+    const chameleons=tops.filter(piece=>piece?.animal==='chameleon');
+    if(chameleons.length>=2&&chameleons.some(piece=>piece.owner!==owner))risk+=60;
+  }
+  return risk;
+}
+function boardKey(board) { return board.map(stack=>stack.map(piece=>`${piece.animal}:${piece.owner||''}:${piece.simOrcaGains||0}`).join('.')).join('/'); }
 
 function generateTurns(board,allowed,owner,limit=Infinity,reserveKrillMoves=false) {
   const results=[],seen=new Set(),animals=[...new Set(allowed.filter(animal=>SPECIES[animal]))];
   const save=(next,createAction,moveAction,order)=>{
     const key=boardKey(next);if(seen.has(key))return;seen.add(key);
-    results.push({board:next,create:createAction,move:moveAction,order,wins:completedLines(next).length,position:positionScore(next)});
+    results.push({board:next,create:createAction,move:moveAction,order,wins:completedLines(next).length,position:positionScore(next,owner)});
   };
   for(const animal of animals)for(let cell=0;cell<9;cell++)if(canCreate(board,animal,cell)){
     const afterCreate=cloneBoard(board);put(afterCreate,animal,cell,owner);
@@ -115,22 +135,26 @@ function generateTurns(board,allowed,owner,limit=Infinity,reserveKrillMoves=fals
   }
   return selected;
 }
-function revealRabbitOutcomes(board,cell,depth=0){
-  if(depth>=5)return[board];
-  const rabbit=board[cell]?.at(-1);
-  if(!rabbit)return[board];
-  if(rabbit.animal==='fox')return[board]; // Drawing and returning souls does not change the board.
-  if(rabbit.animal!=='rabbit')return[board];
+function revealRabbitOutcomes(board,cell,depth=0,hand=[],owner='ai'){
+  if(depth>=4)return[board];
+  const exposed=board[cell]?.at(-1);if(!exposed)return[board];
   const outcomes=[];
-  for(const to of adjacent(cell)){
-    const next=cloneBoard(board);move(next,{from:cell,to});
-    // A rabbit moving away can reveal another rabbit or fox, which resolves
-    // before the original action's remaining after-move effects.
-    outcomes.push(...revealRabbitOutcomes(next,cell,depth+1));
+  if(exposed.animal==='rabbit'){
+    for(const to of adjacent(cell)){const next=cloneBoard(board);move(next,{from:cell,to});outcomes.push(...revealRabbitOutcomes(next,cell,depth+1,hand,owner));}
+  }else if(exposed.animal==='treefrog'){
+    for(const to of adjacent(cell)){if(!board[to]?.length)continue;const next=cloneBoard(board),[frog]=next[cell].splice(-1),[other]=next[to].splice(-1);next[cell].push(other);next[to].push(frog);outcomes.push(next);}
+  }else if(exposed.animal==='python'){
+    for(const from of adjacent(cell)){if(!board[from]?.length)continue;const next=cloneBoard(board),[taken]=next[from].splice(-1);next[cell].splice(next[cell].length-1,0,taken);outcomes.push(...revealRabbitOutcomes(next,from,depth+1,hand,owner));}
+  }else if(exposed.animal==='orca'){
+    for(let from=0;from<board.length;from++){if(from===cell||!board[from]?.length)continue;const next=cloneBoard(board);next[from].pop();const current=next[cell].at(-1);current.simOrcaGains=(current.simOrcaGains||0)+1;outcomes.push(...revealRabbitOutcomes(next,from,depth+1,hand,owner));}
+  }else if(exposed.animal==='seal'){
+    for(const animal of [...new Set(hand)]){const next=cloneBoard(board),seal=next[cell].at(-1);next[cell].splice(next[cell].length-1,0,{uid:`known-seal-${seal.uid}-${animal}`,animal,level:SPECIES[animal]?.level||undefined,owner,known:true});outcomes.push(next);}
   }
-  return outcomes.length?outcomes:[board];
+  // Fox's hand exchange does not change the board; unknown abilities stay
+  // hidden behind an unknown-piece marker rather than being guessed.
+  return outcomes.length?dedupeOutcomes(outcomes):[board];
 }
-function eagleFlightOutcomes(board,eagleUid){
+function eagleFlightOutcomes(board,eagleUid,hand=[],owner='ai'){
   const eagle=locate(board,eagleUid);
   if(!eagle||board[eagle.cell].at(-1)?.uid!==eagleUid)return[board];
   const outcomes=[];
@@ -138,47 +162,100 @@ function eagleFlightOutcomes(board,eagleUid){
     if(target===eagle.cell||!board[target].length)continue;
     const next=cloneBoard(board),bird=locate(next,eagleUid);
     const [piece]=next[bird.cell].splice(bird.index,1);next[target].push(piece);
-    outcomes.push(...revealRabbitOutcomes(next,bird.cell));
+    outcomes.push(...revealRabbitOutcomes(next,bird.cell,0,hand,owner));
   }
   // If there is no legal perch, the server resolves the move without a flight.
   return outcomes.length?outcomes:[board];
 }
-function turnBoardOutcomes(board,option){
+function dedupeOutcomes(boards,limit=48){
+  const seen=new Set(),out=[];
+  for(const candidate of boards){const key=boardKey(candidate);if(seen.has(key))continue;seen.add(key);out.push(candidate);if(out.length>=limit)break;}
+  return out;
+}
+function afterMoveOutcomes(board,pieceUid,target,hand,owner,depth=0){
+  if(depth>=3)return[board];
+  const found=locate(board,pieceUid);if(!found||found.cell!==target||board[target].at(-1)?.uid!==pieceUid)return[board];
+  const animal=found.piece.animal,outcomes=[];
+  if(animal==='mole'){
+    const next=cloneBoard(board),moleAt=locate(next,pieceUid),[mole]=next[target].splice(moleAt.index,1);next[target].unshift(mole);
+    return revealRabbitOutcomes(next,target,0,hand,owner);
+  }
+  if(animal==='krill'&&hand.includes('krill')){
+    for(let cell=0;cell<board.length;cell++)if(!board[cell].length){const next=cloneBoard(board);put(next,'krill',cell,owner,'krill-effect');outcomes.push(next);}
+    return outcomes.length?dedupeOutcomes(outcomes):[board];
+  }
+  if(animal==='eagle')return eagleFlightOutcomes(board,pieceUid,hand,owner);
+  if(animal==='weasel'){
+    for(let from=0;from<board.length;from++){
+      const top=board[from].at(-1);if(!top||top.uid===pieceUid)continue;
+      for(const to of adjacent(from)){
+        const next=cloneBoard(board);move(next,{from,to});
+        for(const afterReveal of revealRabbitOutcomes(next,from,0,hand,owner)){
+          const follow=locate(afterReveal,top.uid);
+          if(follow&&follow.cell===to&&afterReveal[to].at(-1)?.uid===top.uid)
+            outcomes.push(...afterMoveOutcomes(afterReveal,top.uid,to,hand,owner,depth+1));
+          else outcomes.push(afterReveal);
+        }
+      }
+    }
+    return outcomes.length?dedupeOutcomes(outcomes):[board];
+  }
+  if(animal==='crocodile'){
+    for(const line of LINES.filter(cells=>cells.includes(target))){
+      const next=cloneBoard(board),removed=[];
+      for(const cell of line)if(cell!==target&&next[cell].length){next[cell].pop();removed.push(cell);}
+      let variants=[next];
+      for(const cell of removed){
+        const exposed=variants.flatMap(candidate=>revealRabbitOutcomes(candidate,cell,0,hand,owner));
+        if(exposed.length>variants.length)variants=dedupeOutcomes(exposed);
+      }
+      outcomes.push(...variants);
+    }
+    return outcomes.length?dedupeOutcomes(outcomes):[board];
+  }
+  if(animal==='grasshopper'){
+    for(const replacement of hand){const next=cloneBoard(board),piece=locate(next,pieceUid);if(!piece)continue;
+      next[piece.cell][piece.index].animal=replacement;next[piece.cell][piece.index].level=SPECIES[replacement]?.level||undefined;outcomes.push(next);}
+    return outcomes.length?dedupeOutcomes(outcomes):[board];
+  }
+  return[board];
+}
+function turnBoardOutcomes(board,option,hand=[],owner='ai'){
   let base=cloneBoard(board);
   if(option.order==='create-first'){
-    put(base,option.create.animal,option.create.cell,'ai');
-    move(base,option.move);
+    put(base,option.create.animal,option.create.cell,owner);
+    const effectHand=hand.slice();if(option.order==='create-first'){const used=effectHand.indexOf(option.create.animal);if(used>=0)effectHand.splice(used,1);}
+    let starts=revealRabbitOutcomes(base,option.create.cell,0,effectHand,owner);
+    const results=[];
+    for(const created of starts){
+      if(!created[option.move.from]?.length||created[option.move.from].at(-1).animal!==option.move.animal)continue;
+      const movedUid=created[option.move.from].at(-1).uid,next=cloneBoard(created);move(next,option.move);
+      for(const revealed of revealRabbitOutcomes(next,option.move.from,0,effectHand,owner))results.push(...afterMoveOutcomes(revealed,movedUid,option.move.to,effectHand,owner));
+    }
+    return dedupeOutcomes(results);
   }else{
     move(base,option.move);
     const movedPiece=base[option.move.to]?.at(-1);
     // The reveal at the vacated square resolves before the moved animal's
     // after-move ability (notably the eagle flight).
-    const revealOutcomes=revealRabbitOutcomes(base,option.move.from);
+    const revealOutcomes=revealRabbitOutcomes(base,option.move.from,0,hand,owner);
     const settled=[];
     for(const revealed of revealOutcomes){
-      let after=option.move.animal==='eagle'
-        ? eagleFlightOutcomes(revealed,movedPiece?.uid)
-        : [revealed];
+      let after=afterMoveOutcomes(revealed,movedPiece?.uid,option.move.to,hand,owner);
       for(const result of after){
         if(!canCreate(result,option.create.animal,option.create.cell))continue;
-        put(result,option.create.animal,option.create.cell,'ai');settled.push(result);
+        put(result,option.create.animal,option.create.cell,owner);settled.push(result);
       }
     }
     return settled;
   }
-  const movedPiece=base[option.move.to]?.at(-1);
-  let outcomes=revealRabbitOutcomes(base,option.move.from);
-  if(option.move.animal==='eagle'){
-    outcomes=outcomes.flatMap(state=>eagleFlightOutcomes(state,movedPiece?.uid));
-  }
-  return outcomes;
 }
 function krillCanReduceHand(board,option,hand,outcome){
   if(option.move.animal!=='krill')return false;
   const krillInHand=hand.filter(animal=>animal==='krill').length-(option.order==='create-first'&&option.create.animal==='krill'?1:0);
   if(krillInHand<1)return false;
   const stage=cloneBoard(board);
-  if(option.order==='create-first')put(stage,option.create.animal,option.create.cell,'ai');
+  if(option.order==='create-first')put(stage,option.create.animal,option.create.cell,stage[option.create.cell].at(-1)?.owner||'ai');
   move(stage,option.move);
   const moved=stage[option.move.to].at(-1),settledStack=outcome[option.move.to]||[];
   if(!moved)return false;
@@ -187,30 +264,29 @@ function krillCanReduceHand(board,option,hand,outcome){
   const remainsTop=settledStack.at(-1)?.uid===moved.uid;
   const coveredOnlyByPlannedBirth=option.order==='move-first'&&settledStack.at(-1)?.uid===plannedCreateUid&&settledStack.at(-2)?.uid===moved.uid;
   if(movedIndex<0||(!remainsTop&&!coveredOnlyByPlannedBirth))return false;
-  return stage.some(stack=>stack.length===0);
+  return stage.some(stack=>stack.length===0)||outcome.some(stack=>stack.length===0);
 }
 function expectedHandAfterTurn(board,option,hand,outcome){
   let count=hand.length-1; // The planned birth uses one soul from hand.
   if(krillCanReduceHand(board,option,hand,outcome))count--;
-  const revealedOrcas=new Set();
-  if(option.create.animal==='orca'){
-    const created=outcome[option.create.cell]?.at(-1);
-    if(created?.animal==='orca'&&outcome.some((stack,cell)=>stack.length&&cell!==option.create.cell))revealedOrcas.add(created.uid);
-  }
-  const exposedCells=new Set([option.move.from]);
-  if(option.move.animal==='eagle')exposedCells.add(option.move.to);
-  for(const cell of exposedCells){
-    const exposed=outcome[cell]?.at(-1),before=board[cell]?.at(-1);
-    if(exposed?.animal==='orca'&&exposed.uid!==before?.uid&&outcome.some((stack,target)=>stack.length&&target!==cell))revealedOrcas.add(exposed.uid);
-  }
-  count+=revealedOrcas.size;
+  count+=newlyTriggeredOrcaCount(board,outcome);
   return count;
 }
-function bestResponseScore(board) {
-  const replies=generateTurns(board,ANIMAL_IDS,'human',1);
+function newlyTriggeredOrcaCount(before,after){
+  return after.flat().reduce((sum,piece)=>sum+(piece.simOrcaGains||0),0);
+}
+function bestResponseScore(board,attacker='human') {
+  const replies=generateTurns(board,ANIMAL_IDS,attacker,12);
   if(!replies.length)return 0;
-  // A direct winning reply matters far more than any positional advantage.
-  return replies[0].wins?100000+replies[0].wins*1000:replies[0].position;
+  let best=0;
+  for(const reply of replies){
+    for(const outcome of turnBoardOutcomes(board,reply,ANIMAL_IDS,attacker)){
+      if(completedLines(outcome).length)return 10000;
+      best=Math.max(best,defenseRisk(outcome,attacker)+positionScore(outcome,attacker));
+    }
+  }
+  // Direct next-turn connections rank far above exposed two-animal patterns.
+  return best;
 }
 function chooseTurnPlan(board,hand,owner) {
   // The survival score below accounts for Orca's possible extra soul and may
@@ -220,10 +296,10 @@ function chooseTurnPlan(board,hand,owner) {
   let best=null,bestScore=-Infinity;const responseCache=new Map();
   for(const option of options){
     const seenOutcomes=new Set();
-    for(const outcome of turnBoardOutcomes(board,option)){
+    for(const outcome of turnBoardOutcomes(board,option,hand,owner)){
       const key=boardKey(outcome);if(seenOutcomes.has(key))continue;seenOutcomes.add(key);
-      const wins=completedLines(outcome).length,after=cloneBoard(outcome);clearLines(after);
-      const replyKey=boardKey(after),threat=responseCache.has(replyKey)?responseCache.get(replyKey):bestResponseScore(after);
+      const wins=completedLines(outcome).length?1:0,after=cloneBoard(outcome);clearLines(after);
+      const replyKey=boardKey(after),threat=responseCache.has(replyKey)?responseCache.get(replyKey):bestResponseScore(after,'opponent');
       responseCache.set(replyKey,threat);
       const finalHand=expectedHandAfterTurn(board,option,hand,outcome);
       // Score the settled board after mandatory effects. In particular, an
@@ -233,39 +309,44 @@ function chooseTurnPlan(board,hand,owner) {
       // board objective; a krill move is credited only when it can actually
       // spend a krill from hand on an empty cell.
       const survival=finalHand<6?0:-1e12-(finalHand-5)*1e9;
-      const score=survival+wins*1000000-threat*10+positionScore(outcome)*4+positionScore(after);
+      const score=survival+wins*1000000000-threat*10000-defenseRisk(outcome,owner)*500+positionScore(outcome,owner)*10+positionScore(after,owner);
       if(score>bestScore){bestScore=score;best={create:option.create,move:option.move,order:option.order,score};}
     }
   }
   return best;
 }
 function chooseCreate(board,hand,owner) {
-  let best=null,bestScore=-Infinity;
-  const available=hand.length>=6?hand.filter(animal=>animal!=='orca'):hand;
+  let best=null,bestScore=-Infinity;const responseCache=new Map();
+  const available=hand;
   for(const animal of [...new Set(available)]){
     for(let cell=0;cell<board.length;cell++){
       if(!canCreate(board,animal,cell))continue;
       const next=cloneBoard(board);put(next,animal,cell,owner);
-      const wins=completedLines(next).length,after=cloneBoard(next);clearLines(after);
-      const score=wins*1000000+positionScore(next)*4+positionScore(after);
-      if(score>bestScore){bestScore=score;best={animal,cell};}
+      for(const outcome of revealRabbitOutcomes(next,cell,0,hand,owner)){
+        const wins=completedLines(outcome).length?1:0,after=cloneBoard(outcome);clearLines(after);
+        const finalHand=hand.length-1+newlyTriggeredOrcaCount(board,outcome),survival=finalHand<6?0:-1e12-(finalHand-5)*1e9;
+        const key=boardKey(after),threat=responseCache.has(key)?responseCache.get(key):bestResponseScore(after,'opponent');responseCache.set(key,threat);
+        const score=survival+wins*1000000000-threat*10000-defenseRisk(outcome,owner)*500+positionScore(outcome,owner)*10+positionScore(after,owner);
+        if(score>bestScore){bestScore=score;best={animal,cell};}
+      }
     }
   }
   return best;
 }
-function chooseMove(board,owner) {
+function chooseMove(board,owner,hand=[]) {
   let best=null,bestScore=-Infinity;const responseCache=new Map();
   for(const action of moves(board)){
     const next=cloneBoard(board);move(next,action);const movedPiece=next[action.to].at(-1);
-    let outcomes=revealRabbitOutcomes(next,action.from);
-    if(action.animal==='eagle')outcomes=outcomes.flatMap(state=>eagleFlightOutcomes(state,movedPiece.uid));
+    let outcomes=revealRabbitOutcomes(next,action.from,0,hand,owner);
+    outcomes=outcomes.flatMap(state=>afterMoveOutcomes(state,movedPiece.uid,action.to,hand,owner));
     const seen=new Set();
     for(const outcome of outcomes){
       const key=boardKey(outcome);if(seen.has(key))continue;seen.add(key);
-      const wins=completedLines(outcome).length,cleared=cloneBoard(outcome);clearLines(cleared);
-      const replyKey=boardKey(cleared),threat=responseCache.has(replyKey)?responseCache.get(replyKey):bestResponseScore(cleared);
+      const wins=completedLines(outcome).length?1:0,cleared=cloneBoard(outcome);clearLines(cleared);
+      const replyKey=boardKey(cleared),threat=responseCache.has(replyKey)?responseCache.get(replyKey):bestResponseScore(cleared,'opponent');
       responseCache.set(replyKey,threat);
-      const score=wins*1000000-threat*10+positionScore(outcome)*4;
+      const finalHand=hand.length+newlyTriggeredOrcaCount(board,outcome),survival=finalHand<6?0:-1e12-(finalHand-5)*1e9;
+      const score=survival+wins*1000000000-threat*10000-defenseRisk(outcome,owner)*500+positionScore(outcome,owner)*10;
       if(score>bestScore){bestScore=score;best=action;}
     }
   }
@@ -275,13 +356,13 @@ function locate(board,uid) {
   for(let cell=0;cell<board.length;cell++){const index=board[cell].findIndex(piece=>piece.uid===uid);if(index>=0)return{cell,index,piece:board[cell][index]};}
   return null;
 }
-function strategicValue(board) {
-  const wins=completedLines(board).length,cleared=cloneBoard(board);clearLines(cleared);
-  return wins*1000000-bestResponseScore(cleared)*10+positionScore(board)*4;
+function strategicValue(board,owner='ai') {
+  const wins=completedLines(board).length?1:0,cleared=cloneBoard(board);clearLines(cleared);
+  return wins*1000000000-bestResponseScore(cleared,'opponent')*10000-defenseRisk(board,owner)*500+positionScore(board,owner)*10;
 }
-function chooseTarget(board,targets,simulate) {
+function chooseTarget(board,targets,simulate,owner='ai') {
   let best=null,bestScore=-Infinity;
-  for(const to of targets){const next=cloneBoard(board);if(!simulate(next,to))continue;const score=strategicValue(next);if(score>bestScore){bestScore=score;best=to;}}
+  for(const to of targets){const next=cloneBoard(board);if(!simulate(next,to))continue;const score=strategicValue(next,owner);if(score>bestScore){bestScore=score;best=to;}}
   return best;
 }
 function cardValue(animal,board,hand) {
@@ -300,7 +381,7 @@ function choosePendingAction(board,hand,pending,botId) {
     let bestIndex=null,bestScore=-Infinity;
     for(const [lineIndex,line] of (pending.lines||[]).entries()){
       const next=cloneBoard(board);for(const cell of line.cells||[])next[cell]?.pop();
-      const score=strategicValue(next);if(score>bestScore){bestScore=score;bestIndex=lineIndex;}
+      const score=strategicValue(next,botId);if(score>bestScore){bestScore=score;bestIndex=lineIndex;}
     }
     return bestIndex===null?null:{type:'lineChoice',lineIndex:bestIndex};
   }
@@ -319,7 +400,7 @@ function choosePendingAction(board,hand,pending,botId) {
       let score=({python:5,orca:4,rabbit:3,fox:2,seal:2})[piece.animal]||0;
       if(piece.animal==='python')score+=adjacent(candidate.cell).filter(cell=>board[cell].length).length*2;
       if(piece.animal==='orca')score+=board.filter((stack,cell)=>stack.length&&cell!==candidate.cell).length;
-      score+=strategicValue(board)*0.01;
+      score+=strategicValue(board,botId)*0.01;
       if(score>bestScore){bestScore=score;best=candidate.cell;}
     }
     return best===null?null:{type:'effectMove',to:best};
@@ -331,7 +412,7 @@ function choosePendingAction(board,hand,pending,botId) {
       const next=cloneBoard(board),piece=locate(next,pending.pieceId),species=SPECIES[animal];
       if(!piece||!species)return;
       next[piece.cell][piece.index].animal=animal;next[piece.cell][piece.index].level=species.level||undefined;
-      const score=strategicValue(next)-cardValue(animal,board,hand)*0.12;
+      const score=strategicValue(next,botId)-cardValue(animal,board,hand)*0.12;
       if(score>bestScore){bestScore=score;best=handIndex;}
     });
     return{type:'grasshopperSwap',handIndex:best};
@@ -341,7 +422,7 @@ function choosePendingAction(board,hand,pending,botId) {
     let best=null,bestScore=-Infinity;
     for(const to of pending.targets||[]){const next=cloneBoard(board),current=locate(next,pending.pieceId),other=next[to]?.at(-1);if(!current||!other)continue;
       const [frogTop]=next[current.cell].splice(-1),[otherTop]=next[to].splice(-1);next[current.cell].push(otherTop);next[to].push(frogTop);
-      const score=strategicValue(next);if(score>bestScore){bestScore=score;best=to;}
+      const score=strategicValue(next,botId);if(score>bestScore){bestScore=score;best=to;}
     }
     return best===null?null:{type:'effectMove',to:best};
   }
@@ -350,7 +431,7 @@ function choosePendingAction(board,hand,pending,botId) {
     let bestIndex=null,bestScore=-Infinity;
     for(const [lineIndex,line] of (pending.lines||[]).entries()){
       const next=cloneBoard(board);for(const cell of line)if(cell!==crocodile.cell)next[cell].pop();
-      const score=strategicValue(next);if(score>bestScore){bestScore=score;bestIndex=lineIndex;}
+      const score=strategicValue(next,botId);if(score>bestScore){bestScore=score;bestIndex=lineIndex;}
     }
     return bestIndex===null?null:{type:'crocodileLine',lineIndex:bestIndex};
   }
@@ -359,7 +440,7 @@ function choosePendingAction(board,hand,pending,botId) {
     let best=null,bestScore=-Infinity;
     for(const from of targets){const stack=board[from],piece=stack?.at(-1);if(!piece||piece.uid===pending.pieceId)continue;
       let local=-1;
-      for(const to of adjacent(from)){const next=cloneBoard(board);move(next,{from,to});local=Math.max(local,strategicValue(next));}
+      for(const to of adjacent(from)){const next=cloneBoard(board);move(next,{from,to});local=Math.max(local,strategicValue(next,botId));}
       const score=local+(SPECIES[piece.animal]?.level||0)*0.05;
       if(score>bestScore){bestScore=score;best=from;}
     }
@@ -367,13 +448,13 @@ function choosePendingAction(board,hand,pending,botId) {
   }
   if(pending.type==='rabbit-move'||pending.type==='weasel-target'){
     const from=pending.from,piece=board[from]?.at(-1);if(!piece)return null;
-    const to=chooseTarget(board,targets,(next,dest)=>{move(next,{from,to:dest});return true;});
+    const to=chooseTarget(board,targets,(next,dest)=>{move(next,{from,to:dest});return true;},botId);
     return to===null?null:{type:'effectMove',to};
   }
   if(pending.type==='krill-place'){
     const remainingHand=hand.slice(),krillIndex=remainingHand.indexOf('krill');if(krillIndex>=0)remainingHand.splice(krillIndex,1);
     const safeTargets=targets.filter(dest=>{const next=cloneBoard(board);put(next,'krill',dest,botId,'effect');return remainingHand.some(animal=>next.some((_,cell)=>canCreate(next,animal,cell)));});
-    const to=chooseTarget(board,safeTargets.length?safeTargets:targets,(next,dest)=>{put(next,'krill',dest,botId,'effect');return true;});
+    const to=chooseTarget(board,safeTargets.length?safeTargets:targets,(next,dest)=>{put(next,'krill',dest,botId,'effect');return true;},botId);
     return to===null?null:{type:'effectMove',to};
   }
   if(pending.type==='eagle-flight'){
@@ -381,16 +462,16 @@ function choosePendingAction(board,hand,pending,botId) {
     const to=chooseTarget(board,targets,(next,dest)=>{
       const bird=locate(next,pending.pieceId);if(!bird||!next[dest]?.length||next[dest].at(-1).uid===pending.pieceId)return false;
       const [piece]=next[bird.cell].splice(bird.index,1);next[dest].push(piece);return true;
-    });
+    },botId);
     return to===null?null:{type:'effectMove',to};
   }
   if(pending.type==='orca-take'){
-    const to=chooseTarget(board,targets,(next,dest)=>{if(!next[dest]?.length)return false;next[dest].pop();return true;});
+    const to=chooseTarget(board,targets,(next,dest)=>{if(!next[dest]?.length)return false;next[dest].pop();return true;},botId);
     return to===null?null:{type:'effectMove',to};
   }
   if(pending.type==='python-collect'){
     const python=locate(board,pending.pieceId);if(!python)return null;
-    const to=chooseTarget(board,targets,(next,source)=>{if(!next[source]?.length)return false;const [piece]=next[source].splice(-1);const current=locate(next,pending.pieceId);if(!current)return false;next[current.cell].splice(current.index,0,piece);return true;});
+    const to=chooseTarget(board,targets,(next,source)=>{if(!next[source]?.length)return false;const [piece]=next[source].splice(-1);const current=locate(next,pending.pieceId);if(!current)return false;next[current.cell].splice(current.index,0,piece);return true;},botId);
     return to===null?null:{type:'effectMove',to};
   }
   return null;

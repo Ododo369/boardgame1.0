@@ -26,7 +26,18 @@ const chainNames = { 0:'食物鏈 A', 1:'食物鏈 B', 2:'食物鏈 C', 3:'食�
 const colors = ['#eb785d', '#4c9b8a', '#6384d8', '#d69a3d'];
 const code = () => Math.random().toString(36).slice(2, 6).toUpperCase();
 const shuffle = a => { for (let i=a.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[a[i],a[j]]=[a[j],a[i]];} return a; };
-function broadcast(room) { for (const p of room.players) if (p.socket?.readyState === 1) p.socket.send(JSON.stringify({ type:'state', state: publicState(room,p.id) })); scheduleBot(room); }
+function rememberBotVisibleTops(room) {
+  if(!room.botKnownPieces)room.botKnownPieces=new Set();
+  for(const stack of room.board){const top=stack.at(-1);if(top)room.botKnownPieces.add(top.uid);}
+}
+function aiViewBoard(room) {
+  const known=room.botKnownPieces||new Set();
+  return room.board.map(stack=>stack.map((piece,index)=>{
+    if(index===stack.length-1||known.has(piece.uid))return {...piece};
+    return {uid:`unknown-${piece.uid}`,animal:'unknown',level:0,owner:'unknown',unknown:true};
+  }));
+}
+function broadcast(room) { rememberBotVisibleTops(room);for (const p of room.players) if (p.socket?.readyState === 1) p.socket.send(JSON.stringify({ type:'state', state: publicState(room,p.id) })); scheduleBot(room); }
 function publicState(room, viewerId) {
   return { code:room.code, started:room.started, hostId:room.hostId, turn:room.turn, active:room.active,
     players:room.players.map(({id,name,hand,color,connected,isBot})=>({id,name,hand:id===viewerId?hand:[],handCount:hand.length,color,connected,isBot:!!isBot})),
@@ -410,6 +421,7 @@ function handle(room,p,msg){
     const seal=findPiece(room,pending.pieceId);if(!seal){room.pendingEffect=null;resolvePendingEffects(room,p);broadcast(room);return;}
     const [chosen]=p.hand.splice(msg.handIndex,1);
     const species=animals.find(a=>a.id===chosen),piece={uid:room.nextPieceId++,animal:chosen,...(species.level===0?{}:{level:species.level}),owner:p.id};
+    if(p.isBot)room.botKnownPieces?.add(piece.uid);
     room.board[seal.cell].splice(seal.index,0,piece);room.pendingEffect=null;
     note(room,`${p.name}完成海豹效果。`);
     resolvePendingEffects(room,p);broadcast(room);return;
@@ -466,7 +478,8 @@ function runBotStep(room,bot){
   room.botThinking=true;
   try{
     if(isPending){
-      let action=choosePendingAction(room.board,bot.hand,room.pendingEffect,bot.id);
+      const board=aiViewBoard(room);
+      let action=choosePendingAction(board,bot.hand,room.pendingEffect,bot.id);
       if(!action){
         const pending=room.pendingEffect;
         if(pending.type==='fox-return')action={type:'foxReturn',animals:bot.hand.slice(0,pending.count)};
@@ -480,7 +493,7 @@ function runBotStep(room,bot){
       if(room.active?.moved){
         const planned=room.botPlan?.playerId===bot.id?room.botPlan.create:null;
         const create=planned&&bot.hand.includes(planned.animal)&&canCreate(room,planned.animal,planned.cell)
-          ?planned:chooseCreate(room.board,bot.hand,bot.id);
+          ?planned:chooseCreate(aiViewBoard(room),bot.hand,bot.id);
         if(!create){
           note(room,`${bot.name}找不到符合規則的出生位置，接收1個靈魂並跳過剩餘行動。`);
           draw(room,bot,1);room.active.created=true;room.botPlan=null;finishAction(room,bot);broadcast(room);return;
@@ -489,16 +502,16 @@ function runBotStep(room,bot){
         handle(room,bot,{type:'create',animal:create.animal,cell:create.cell});
         return;
       }
-      let plan=room.botPlan?.playerId===bot.id?room.botPlan:chooseTurnPlan(room.board,bot.hand,bot.id);
+      let plan=room.botPlan?.playerId===bot.id?room.botPlan:chooseTurnPlan(aiViewBoard(room),bot.hand,bot.id);
       if(!plan){handle(room,bot,{type:'skip'});return;}
       room.botPlan={playerId:bot.id,create:plan.create,move:plan.move,order:plan.order};
       const plannedMove=plan.move&&room.board[plan.move.from]?.at(-1)?.animal===plan.move.animal&&adjacentCells(plan.move.from).includes(plan.move.to);
       if(plan.order==='move-first'&&!room.active?.moved){
-        const action=plannedMove?plan.move:chooseMove(room.board,bot.id);
+        const action=plannedMove?plan.move:chooseMove(aiViewBoard(room),bot.id,bot.hand);
         if(action){handle(room,bot,{type:'move',from:action.from,to:action.to});return;}
       }
       if(!plan.create||!bot.hand.includes(plan.create.animal)||!canCreate(room,plan.create.animal,plan.create.cell)){
-        plan=chooseTurnPlan(room.board,bot.hand,bot.id);
+        plan=chooseTurnPlan(aiViewBoard(room),bot.hand,bot.id);
         if(!plan){handle(room,bot,{type:'skip'});return;}
         room.botPlan={playerId:bot.id,create:plan.create,move:plan.move,order:'create-first'};
       }
@@ -507,7 +520,7 @@ function runBotStep(room,bot){
     }
     if(!room.active?.moved){
       let action=room.botPlan?.playerId===bot.id?room.botPlan.move:null;
-      if(!action||!room.board[action.from]?.length||room.board[action.from].at(-1)?.animal!==action.animal||!adjacentCells(action.from).includes(action.to))action=chooseMove(room.board,bot.id);
+      if(!action||!room.board[action.from]?.length||room.board[action.from].at(-1)?.animal!==action.animal||!adjacentCells(action.from).includes(action.to))action=chooseMove(aiViewBoard(room),bot.id,bot.hand);
       room.botPlan=null;
       if(action)handle(room,bot,{type:'move',from:action.from,to:action.to});
       else if(!room.active?.created)handle(room,bot,{type:'skip'});
@@ -523,7 +536,7 @@ const server=http.createServer((req,res)=>{const u=new URL(req.url,'http://local
 const wss=new WebSocketServer({server});
 wss.on('connection',socket=>{let player=null,room=null;socket.on('message',raw=>{let m;try{m=JSON.parse(raw);}catch{return;}
   if(m.type==='createRoom'||m.type==='createSoloRoom'||m.type==='joinRoom'){const name=String(m.name||'職員').trim().slice(0,16)||'職員';const solo=m.type==='createSoloRoom';let r;
-    if(m.type==='createRoom'||solo){let c;do{c=code();}while(rooms.has(c));r={code:c,players:[],board:Array.from({length:9},()=>[]),bag:[],started:false,turn:0,active:null,hostId:null,log:[],winner:null,pendingEffect:null,effectQueue:[],effectSeen:new Set(),nextPieceId:1,lineEvents:[],nextLineEventId:1,eliminationEvent:null,nextEliminationEventId:1,selectedChains:null,advanceAfterEffects:null,botScheduled:false,botThinking:false,botPlan:null};rooms.set(c,r);}
+    if(m.type==='createRoom'||solo){let c;do{c=code();}while(rooms.has(c));r={code:c,players:[],board:Array.from({length:9},()=>[]),bag:[],started:false,turn:0,active:null,hostId:null,log:[],winner:null,pendingEffect:null,effectQueue:[],effectSeen:new Set(),botKnownPieces:new Set(),nextPieceId:1,lineEvents:[],nextLineEventId:1,eliminationEvent:null,nextEliminationEventId:1,selectedChains:null,advanceAfterEffects:null,botScheduled:false,botThinking:false,botPlan:null};rooms.set(c,r);}
     else r=rooms.get(String(m.code||'').toUpperCase());
     if(!r){socket.send(JSON.stringify({type:'error',message:'找不到這個房間代碼。'}));return;}
     if(r.started||r.players.length>=4){socket.send(JSON.stringify({type:'error',message:'房間已開始或人數已滿。'}));return;}
